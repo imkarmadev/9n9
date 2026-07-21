@@ -106,6 +106,16 @@ function findOpenNodePosition(
   };
 }
 
+function createNodeId(kind: NodeKind) {
+  const randomBytes = crypto.getRandomValues(new Uint8Array(4));
+  const suffix = Array.from(randomBytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  )
+    .join("")
+    .slice(0, 7);
+  return kind.split(".").at(-1) + "-" + suffix;
+}
+
 function changesWorkflowNodes(changes: NodeChange<N9nFlowNode>[]) {
   return changes.some(
     (change) =>
@@ -403,7 +413,7 @@ export function WorkflowStudio() {
   };
 
   const addNode = (item: (typeof palette)[number]) => {
-    const id = item.kind.split(".").at(-1) + "-" + crypto.randomUUID().slice(0, 7);
+    const id = createNodeId(item.kind);
     const bounds = canvasRef.current?.getBoundingClientRect();
     const center =
       flowInstance && bounds

@@ -44,4 +44,8 @@ curl \
   --retry-delay 2 \
   "${PI_URL}/api/status"
 echo
+
+echo "==> Running browser tests against the deployed Pi"
+PLAYWRIGHT_BASE_URL="${PI_URL}" npm run test:e2e
+
 echo "==> 9n9 is deployed and healthy"

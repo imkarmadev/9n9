@@ -87,6 +87,15 @@ test("palette adds a visible selected node without overlapping existing nodes", 
   page,
   request,
 }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript(() => {
+    Object.defineProperty(Crypto.prototype, "randomUUID", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+
   const workflow = await createWorkflow(
     request,
     "[e2e] palette " + Date.now(),
@@ -106,22 +115,29 @@ test("palette adds a visible selected node without overlapping existing nodes", 
   );
   await expect(page.locator(".save-state")).toHaveText("Unsaved");
 
-  const canvasBox = await canvas.boundingBox();
+  const handleTolerance = 4;
+  await expect
+    .poll(async () => {
+      const currentCanvasBox = await canvas.boundingBox();
+      const currentHttpBox = await httpNode.boundingBox();
+      if (!currentCanvasBox || !currentHttpBox) return false;
+      return (
+        currentHttpBox.x >= currentCanvasBox.x - handleTolerance &&
+        currentHttpBox.y >= currentCanvasBox.y - handleTolerance &&
+        currentHttpBox.x + currentHttpBox.width <=
+          currentCanvasBox.x + currentCanvasBox.width + handleTolerance &&
+        currentHttpBox.y + currentHttpBox.height <=
+          currentCanvasBox.y + currentCanvasBox.height + handleTolerance
+      );
+    }, { message: "HTTP node should settle fully inside the canvas" })
+    .toBe(true);
+
   const manualBox = await manualNode.boundingBox();
   const httpBox = await httpNode.boundingBox();
-  if (!canvasBox || !manualBox || !httpBox) {
+  if (!manualBox || !httpBox) {
     throw new Error("Expected canvas and workflow nodes to have layout boxes");
   }
 
-  const handleTolerance = 4;
-  expect(httpBox.x).toBeGreaterThanOrEqual(canvasBox.x - handleTolerance);
-  expect(httpBox.y).toBeGreaterThanOrEqual(canvasBox.y - handleTolerance);
-  expect(httpBox.x + httpBox.width).toBeLessThanOrEqual(
-    canvasBox.x + canvasBox.width + handleTolerance,
-  );
-  expect(httpBox.y + httpBox.height).toBeLessThanOrEqual(
-    canvasBox.y + canvasBox.height + handleTolerance,
-  );
   expect(rectanglesOverlap(manualBox, httpBox)).toBe(false);
 
   await page.getByRole("button", { name: "Save" }).click();
@@ -145,6 +161,7 @@ test("palette adds a visible selected node without overlapping existing nodes", 
       "type",
     ]);
   }
+  expect(pageErrors).toEqual([]);
 });
 
 test("a configured flow runs and exposes its trace and output", async ({

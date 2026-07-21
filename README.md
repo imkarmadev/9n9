@@ -47,6 +47,16 @@ npm run test:e2e
 npm run test:e2e:ui
 ```
 
+After deploying, test the real LAN origin too:
+
+```bash
+npm run test:e2e:live
+```
+
+This matters because browsers apply different security rules to `localhost`
+and a plain-HTTP LAN address. The Pi deployment command runs this live suite
+automatically after its health check.
+
 GitHub Actions runs the same gate for every push to `main` and every pull
 request.
 

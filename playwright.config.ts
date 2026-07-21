@@ -2,7 +2,8 @@ import { defineConfig, devices } from "@playwright/test";
 import path from "node:path";
 
 const port = Number(process.env.PLAYWRIGHT_PORT ?? 3109);
-const baseURL = "http://127.0.0.1:" + port;
+const externalBaseURL = process.env.PLAYWRIGHT_BASE_URL;
+const baseURL = externalBaseURL ?? "http://127.0.0.1:" + port;
 const databasePath = path.join(
   process.cwd(),
   ".test-data",
@@ -31,16 +32,18 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  webServer: {
-    command:
-      "npm run dev -- --hostname 127.0.0.1 --port " + String(port),
-    url: baseURL + "/api/status",
-    reuseExistingServer: false,
-    timeout: 120_000,
-    env: {
-      N9N_DATABASE_PATH: databasePath,
-      CODEX_AGENT_URL: "http://127.0.0.1:1",
-      NEXT_TELEMETRY_DISABLED: "1",
-    },
-  },
+  webServer: externalBaseURL
+    ? undefined
+    : {
+        command:
+          "npm run dev -- --hostname 127.0.0.1 --port " + String(port),
+        url: baseURL + "/api/status",
+        reuseExistingServer: false,
+        timeout: 120_000,
+        env: {
+          N9N_DATABASE_PATH: databasePath,
+          CODEX_AGENT_URL: "http://127.0.0.1:1",
+          NEXT_TELEMETRY_DISABLED: "1",
+        },
+      },
 });
