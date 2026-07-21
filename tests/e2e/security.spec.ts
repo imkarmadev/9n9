@@ -106,7 +106,7 @@ test("credentials stay masked, execute server-side, and redact run data", async 
     await page.getByRole("button", { name: "Credentials" }).click();
     await expect(page.getByText("[e2e] bearer")).toBeVisible();
     await page.getByRole("button", { name: "Audit" }).click();
-    await expect(page.getByText("credential.used")).toBeVisible();
+    await expect(page.getByText("credential.used").first()).toBeVisible();
   } finally {
     echo?.close();
     if (workflowId) await request.delete(`/api/workflows/${workflowId}`, { headers: secureHeaders() });
