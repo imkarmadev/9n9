@@ -13,6 +13,7 @@ import {
   type Edge,
   type EdgeChange,
   type NodeChange,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import {
   Activity,
@@ -38,6 +39,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
 } from "react";
@@ -196,6 +198,9 @@ export function WorkflowStudio() {
   const [running, setRunning] = useState(false);
   const [notice, setNotice] = useState("Ready");
   const [runResult, setRunResult] = useState<WorkflowRun | null>(null);
+  const [flowInstance, setFlowInstance] =
+    useState<ReactFlowInstance<N9nFlowNode, Edge> | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedId) ?? null,
@@ -325,13 +330,24 @@ export function WorkflowStudio() {
 
   const addNode = (item: (typeof palette)[number]) => {
     const id = item.kind.split(".").at(-1) + "-" + crypto.randomUUID().slice(0, 7);
+    const bounds = canvasRef.current?.getBoundingClientRect();
+    const center =
+      flowInstance && bounds
+        ? flowInstance.screenToFlowPosition({
+            x: bounds.left + bounds.width / 2,
+            y: bounds.top + bounds.height / 2,
+          })
+        : { x: 400, y: 200 };
+    const offset = (nodes.length % 4) * 18;
+    const position = {
+      x: center.x - 108 + offset,
+      y: center.y - 34 + offset,
+    };
+
     const node: N9nFlowNode = {
       id,
       type: "n9n",
-      position: {
-        x: 260 + (nodes.length % 3) * 280,
-        y: 100 + Math.floor(nodes.length / 3) * 170,
-      },
+      position,
       data: {
         kind: item.kind,
         label: item.title,
@@ -341,6 +357,14 @@ export function WorkflowStudio() {
     setNodes((items) => [...items, node]);
     setSelectedId(id);
     setDirty(true);
+    setNotice("Added " + item.title);
+
+    requestAnimationFrame(() => {
+      flowInstance?.setCenter(position.x + 108, position.y + 34, {
+        zoom: Math.min(flowInstance.getZoom(), 1.1),
+        duration: 250,
+      });
+    });
   };
 
   const connect = useCallback(
@@ -539,7 +563,7 @@ export function WorkflowStudio() {
             <div className="studio">
               <NodePalette onAdd={addNode} />
 
-              <div className="canvas">
+              <div className="canvas" ref={canvasRef}>
                 <ReactFlow
                   nodes={nodes}
                   edges={edges}
@@ -547,6 +571,7 @@ export function WorkflowStudio() {
                   onNodesChange={handleNodesChange}
                   onEdgesChange={handleEdgesChange}
                   onConnect={connect}
+                  onInit={setFlowInstance}
                   onNodeClick={(_, node) => setSelectedId(node.id)}
                   onPaneClick={() => setSelectedId(null)}
                   fitView
