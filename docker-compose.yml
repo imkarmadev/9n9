@@ -1,0 +1,38 @@
+services:
+  9n9:
+    build: .
+    container_name: 9n9
+    restart: unless-stopped
+    environment:
+      CODEX_AGENT_URL: http://codex-agent:8080
+      N9N_DATABASE_PATH: /data/9n9.db
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "9999:9999"
+    volumes:
+      - 9n9_data:/data
+    networks:
+      - default
+      - codex
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:9999/api/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+networks:
+  codex:
+    external: true
+    name: n8n_default
+
+volumes:
+  9n9_data:

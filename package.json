@@ -1,0 +1,36 @@
+{
+  "name": "9n9",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "NEXT_TELEMETRY_DISABLED=1 next dev",
+    "build": "NEXT_TELEMETRY_DISABLED=1 next build",
+    "start": "NEXT_TELEMETRY_DISABLED=1 next start",
+    "lint": "eslint . --ignore-pattern .next"
+  },
+  "overrides": {
+    "postcss": "8.5.10"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.10.0",
+    "better-sqlite3": "^12.2.0",
+    "lucide-react": "^0.468.0",
+    "next": "16.2.6",
+    "node-cron": "^4.2.1",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.6",
+    "typescript": "5.9.3"
+  },
+  "type": "module"
+}

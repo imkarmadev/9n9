@@ -1,0 +1,88 @@
+export type NodeKind =
+  | "trigger.manual"
+  | "trigger.webhook"
+  | "trigger.schedule"
+  | "action.codex"
+  | "action.http"
+  | "data.compose"
+  | "logic.condition";
+
+export type NodeConfig = Record<string, unknown>;
+
+export interface WorkflowNodeData extends Record<string, unknown> {
+  kind: NodeKind;
+  label: string;
+  config: NodeConfig;
+}
+
+export interface WorkflowNode {
+  id: string;
+  type: "n9n";
+  position: { x: number; y: number };
+  data: WorkflowNodeData;
+}
+
+export interface WorkflowEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string | null;
+}
+
+export interface WorkflowGraph {
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+}
+
+export interface Workflow {
+  id: string;
+  name: string;
+  slug: string;
+  enabled: boolean;
+  graph: WorkflowGraph;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type RunStatus = "running" | "success" | "failed";
+
+export interface RunTrace {
+  nodeId: string;
+  label: string;
+  kind: NodeKind;
+  status: "success" | "failed" | "skipped";
+  startedAt: string;
+  durationMs: number;
+  output?: unknown;
+  error?: string;
+}
+
+export interface WorkflowRun {
+  id: string;
+  workflowId: string;
+  workflowName?: string;
+  status: RunStatus;
+  triggerType: string;
+  input: unknown;
+  output?: unknown;
+  error?: string;
+  trace: RunTrace[];
+  startedAt: string;
+  finishedAt?: string;
+}
+
+export const EMPTY_GRAPH: WorkflowGraph = {
+  nodes: [
+    {
+      id: "trigger",
+      type: "n9n",
+      position: { x: 80, y: 160 },
+      data: {
+        kind: "trigger.manual",
+        label: "When I click run",
+        config: {},
+      },
+    },
+  ],
+  edges: [],
+};
