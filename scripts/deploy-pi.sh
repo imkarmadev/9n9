@@ -19,6 +19,7 @@ rsync \
   --delete \
   --rsync-path="sudo -n rsync" \
   --exclude='.env' \
+  --exclude='.initial-admin-password' \
   --exclude='.git/' \
   --exclude='.next/' \
   --exclude='.test-data/' \
@@ -46,6 +47,10 @@ if ! grep -q '^N9N_BOOTSTRAP_ADMIN_PASSWORD=' "${env_file}"; then
   printf 'N9N_BOOTSTRAP_ADMIN_USERNAME=admin\n' >> "${env_file}"
   printf 'N9N_BOOTSTRAP_ADMIN_PASSWORD=%s\n' "${admin_password}" >> "${env_file}"
   printf '%s' "${admin_password}" > "${password_file}"
+fi
+if [[ ! -f "${password_file}" ]]; then
+  admin_password="$(sed -n 's/^N9N_BOOTSTRAP_ADMIN_PASSWORD=//p' "${env_file}" | head -n 1)"
+  if [[ -n "${admin_password}" ]]; then printf '%s' "${admin_password}" > "${password_file}"; fi
 fi
 if ! grep -q '^N9N_PUBLIC_ORIGIN=' "${env_file}"; then
   printf 'N9N_PUBLIC_ORIGIN=%s\n' "${public_origin}" >> "${env_file}"
