@@ -80,10 +80,24 @@ if [[ -z "${N9N_DEPLOY_SESSION_TOKEN}" || -z "${N9N_DEPLOY_CSRF_TOKEN}" || "${N9
   exit 1
 fi
 
+echo "==> Starting the isolated credential-redaction echo target"
+ssh "${PI_TARGET}" "sudo -n docker rm -f 9n9-e2e-echo >/dev/null 2>&1 || true"
+ssh "${PI_TARGET}" \
+  "sudo -n docker run --detach --rm --name 9n9-e2e-echo --cap-drop ALL --security-opt no-new-privileges:true --publish 10099:10099 --entrypoint node 9n9-9n9 -e 'require(\"node:http\").createServer((request,response)=>{response.setHeader(\"content-type\",\"application/json\");response.end(JSON.stringify({authorization:request.headers.authorization}))}).listen(10099,\"0.0.0.0\")'" \
+  >/dev/null
+cleanup_echo() {
+  ssh "${PI_TARGET}" "sudo -n docker rm -f 9n9-e2e-echo >/dev/null 2>&1 || true"
+}
+trap cleanup_echo EXIT
+N9N_DEPLOY_ECHO_URL="${PI_URL%:*}:10099"
+
 echo "==> Running browser tests against the deployed Pi"
 N9N_E2E_SESSION_TOKEN="${N9N_DEPLOY_SESSION_TOKEN}" \
   N9N_E2E_CSRF_TOKEN="${N9N_DEPLOY_CSRF_TOKEN}" \
+  N9N_E2E_ECHO_URL="${N9N_DEPLOY_ECHO_URL}" \
   PLAYWRIGHT_BASE_URL="${PI_URL}" npm run test:e2e
-unset N9N_DEPLOY_SESSION N9N_DEPLOY_SESSION_TOKEN N9N_DEPLOY_CSRF_TOKEN
+cleanup_echo
+trap - EXIT
+unset N9N_DEPLOY_SESSION N9N_DEPLOY_SESSION_TOKEN N9N_DEPLOY_CSRF_TOKEN N9N_DEPLOY_ECHO_URL
 
 echo "==> 9n9 is deployed and healthy"

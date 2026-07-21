@@ -65,13 +65,14 @@ test("credentials stay masked, execute server-side, and redact run data", async 
   expect(credential.masked).toBe("••••••••");
   expect(await credentialResponse.text()).not.toContain(secret);
 
-  const echo = createServer((request, response) => {
+  const echo = process.env.N9N_E2E_ECHO_URL ? null : createServer((request, response) => {
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify({ authorization: request.headers.authorization, echo: secret }));
   });
-  await new Promise<void>((resolve) => echo.listen(0, "127.0.0.1", resolve));
-  const address = echo.address();
-  if (!address || typeof address === "string") throw new Error("Echo server did not bind");
+  if (echo) await new Promise<void>((resolve) => echo.listen(0, "127.0.0.1", resolve));
+  const address = echo?.address();
+  if (echo && (!address || typeof address === "string")) throw new Error("Echo server did not bind");
+  const echoUrl = process.env.N9N_E2E_ECHO_URL ?? `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
 
   let workflowId = "";
   const workflowName = `[e2e] credential ${Date.now()}`;
@@ -85,7 +86,7 @@ test("credentials stay masked, execute server-side, and redact run data", async 
         graph: {
           nodes: [
             { id: "trigger", type: "n9n", position: { x: 80, y: 160 }, data: { kind: "trigger.manual", label: "Start", config: {} } },
-            { id: "http", type: "n9n", position: { x: 400, y: 160 }, data: { kind: "action.http", label: "Private request", config: { method: "GET", url: `http://127.0.0.1:${address.port}`, headers: "{}", credentialId: credential.id } } },
+            { id: "http", type: "n9n", position: { x: 400, y: 160 }, data: { kind: "action.http", label: "Private request", config: { method: "GET", url: echoUrl, headers: "{}", credentialId: credential.id } } },
           ],
           edges: [{ id: "trigger-http", source: "trigger", target: "http" }],
         },
@@ -107,7 +108,7 @@ test("credentials stay masked, execute server-side, and redact run data", async 
     await page.getByRole("button", { name: "Audit" }).click();
     await expect(page.getByText("credential.used")).toBeVisible();
   } finally {
-    echo.close();
+    echo?.close();
     if (workflowId) await request.delete(`/api/workflows/${workflowId}`, { headers: secureHeaders() });
     await request.delete(`/api/credentials/${credential.id}`, { headers: secureHeaders() });
   }
