@@ -11,6 +11,8 @@ import {
   useNodesState,
   type Connection,
   type Edge,
+  type EdgeChange,
+  type NodeChange,
 } from "@xyflow/react";
 import {
   Activity,
@@ -48,6 +50,20 @@ import type {
 } from "@/lib/types";
 
 const nodeTypes = { n9n: FlowNode };
+
+function changesWorkflowNodes(changes: NodeChange<N9nFlowNode>[]) {
+  return changes.some(
+    (change) =>
+      change.type === "add" ||
+      change.type === "remove" ||
+      change.type === "replace" ||
+      (change.type === "position" && change.position !== undefined),
+  );
+}
+
+function changesWorkflowEdges(changes: EdgeChange<Edge>[]) {
+  return changes.some((change) => change.type !== "select");
+}
 
 type ServiceStatus = {
   codex: "online" | "offline";
@@ -337,6 +353,22 @@ export function WorkflowStudio() {
     [setEdges],
   );
 
+  const handleNodesChange = useCallback(
+    (changes: NodeChange<N9nFlowNode>[]) => {
+      onNodesChange(changes);
+      if (changesWorkflowNodes(changes)) setDirty(true);
+    },
+    [onNodesChange],
+  );
+
+  const handleEdgesChange = useCallback(
+    (changes: EdgeChange<Edge>[]) => {
+      onEdgesChange(changes);
+      if (changesWorkflowEdges(changes)) setDirty(true);
+    },
+    [onEdgesChange],
+  );
+
   const updateNode = (patch: Partial<N9nFlowNode["data"]>) => {
     if (!selectedId) return;
     setNodes((items) =>
@@ -512,14 +544,8 @@ export function WorkflowStudio() {
                   nodes={nodes}
                   edges={edges}
                   nodeTypes={nodeTypes}
-                  onNodesChange={(changes) => {
-                    onNodesChange(changes);
-                    setDirty(true);
-                  }}
-                  onEdgesChange={(changes) => {
-                    onEdgesChange(changes);
-                    setDirty(true);
-                  }}
+                  onNodesChange={handleNodesChange}
+                  onEdgesChange={handleEdgesChange}
                   onConnect={connect}
                   onNodeClick={(_, node) => setSelectedId(node.id)}
                   onPaneClick={() => setSelectedId(null)}
