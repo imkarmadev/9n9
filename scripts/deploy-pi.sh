@@ -70,18 +70,20 @@ echo
 
 echo "==> Creating a short-lived deployment test session"
 curl --fail --silent --show-error "${PI_URL}/" >/dev/null
-mapfile -t E2E_SESSION < <(
+N9N_DEPLOY_SESSION="$(
   ssh "${PI_TARGET}" "sudo -n docker exec 9n9 node /app/scripts/create-test-session.mjs"
-)
-if [[ "${#E2E_SESSION[@]}" -ne 2 ]]; then
+)"
+N9N_DEPLOY_SESSION_TOKEN="${N9N_DEPLOY_SESSION%%$'\n'*}"
+N9N_DEPLOY_CSRF_TOKEN="${N9N_DEPLOY_SESSION#*$'\n'}"
+if [[ -z "${N9N_DEPLOY_SESSION_TOKEN}" || -z "${N9N_DEPLOY_CSRF_TOKEN}" || "${N9N_DEPLOY_SESSION_TOKEN}" == "${N9N_DEPLOY_CSRF_TOKEN}" ]]; then
   echo "Could not create the deployment test session" >&2
   exit 1
 fi
 
 echo "==> Running browser tests against the deployed Pi"
-N9N_E2E_SESSION_TOKEN="${E2E_SESSION[0]}" \
-  N9N_E2E_CSRF_TOKEN="${E2E_SESSION[1]}" \
+N9N_E2E_SESSION_TOKEN="${N9N_DEPLOY_SESSION_TOKEN}" \
+  N9N_E2E_CSRF_TOKEN="${N9N_DEPLOY_CSRF_TOKEN}" \
   PLAYWRIGHT_BASE_URL="${PI_URL}" npm run test:e2e
-unset E2E_SESSION
+unset N9N_DEPLOY_SESSION N9N_DEPLOY_SESSION_TOKEN N9N_DEPLOY_CSRF_TOKEN
 
 echo "==> 9n9 is deployed and healthy"
