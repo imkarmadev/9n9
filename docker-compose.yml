@@ -6,6 +6,11 @@ services:
     environment:
       CODEX_AGENT_URL: http://codex-agent:8080
       N9N_DATABASE_PATH: /data/9n9.db
+      N9N_MASTER_KEY: ${N9N_MASTER_KEY:?N9N_MASTER_KEY is required}
+      N9N_BOOTSTRAP_ADMIN_USERNAME: ${N9N_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      N9N_BOOTSTRAP_ADMIN_PASSWORD: ${N9N_BOOTSTRAP_ADMIN_PASSWORD:-}
+      N9N_PUBLIC_ORIGIN: ${N9N_PUBLIC_ORIGIN:-http://192.168.1.95:9999}
+      N9N_TRUSTED_LAN_ONLY: ${N9N_TRUSTED_LAN_ONLY:-false}
       NEXT_TELEMETRY_DISABLED: "1"
     ports:
       - "9999:9999"
@@ -16,6 +21,8 @@ services:
       - codex
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
       test:
         [

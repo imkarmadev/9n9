@@ -42,6 +42,8 @@ export interface Workflow {
   graph: WorkflowGraph;
   createdAt: string;
   updatedAt: string;
+  webhookProtected: boolean;
+  webhookToken?: string;
 }
 
 export type RunStatus = "running" | "success" | "failed";

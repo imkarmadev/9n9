@@ -47,7 +47,72 @@ function createDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_runs_workflow_started
       ON runs(workflow_id, started_at DESC);
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      password_updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      csrf_hash TEXT NOT NULL,
+      csrf_token TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      user_agent TEXT,
+      ip TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_expiry
+      ON sessions(expires_at);
+
+    CREATE TABLE IF NOT EXISTS credentials (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      encrypted_data TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_used_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_credentials_name
+      ON credentials(name COLLATE NOCASE);
+
+    CREATE TABLE IF NOT EXISTS audit_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      event TEXT NOT NULL,
+      resource_type TEXT,
+      resource_id TEXT,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      ip TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_created
+      ON audit_events(created_at DESC);
   `);
+
+  const workflowColumns = instance
+    .prepare("PRAGMA table_info(workflows)")
+    .all() as Array<{ name: string }>;
+  if (!workflowColumns.some((column) => column.name === "webhook_token_hash")) {
+    instance.exec("ALTER TABLE workflows ADD COLUMN webhook_token_hash TEXT");
+  }
+  const sessionColumns = instance
+    .prepare("PRAGMA table_info(sessions)")
+    .all() as Array<{ name: string }>;
+  if (!sessionColumns.some((column) => column.name === "csrf_token")) {
+    instance.exec("ALTER TABLE sessions ADD COLUMN csrf_token TEXT");
+  }
 
   return instance;
 }

@@ -29,6 +29,8 @@ import {
   GitBranch,
   Globe2,
   History,
+  KeyRound,
+  LogOut,
   FlaskConical,
   MousePointerClick,
   Play,
@@ -36,6 +38,8 @@ import {
   Redo2,
   Save,
   Settings2,
+  ShieldCheck,
+  UserRound,
   Undo2,
   Webhook,
   X,
@@ -51,6 +55,8 @@ import {
   type DragEvent as ReactDragEvent,
 } from "react";
 import { FlowNode, type N9nFlowNode } from "./FlowNode";
+import { AccountView, AuditView, CredentialsView } from "./SecurityViews";
+import type { CredentialSummary } from "@/lib/credentials";
 import type {
   NodeConfig,
   NodeKind,
@@ -283,11 +289,15 @@ const templateFields: Partial<
   ],
 };
 
-async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
+async function jsonRequest<T>(url: string, csrfToken: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
   const response = await fetch(url, {
     ...init,
     headers: {
       "content-type": "application/json",
+      ...(!["GET", "HEAD", "OPTIONS"].includes(method)
+        ? { "x-9n9-csrf": csrfToken }
+        : {}),
       ...init?.headers,
     },
   });
@@ -331,14 +341,15 @@ function Field({
   );
 }
 
-export function WorkflowStudio() {
+export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; username: string }) {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [active, setActive] = useState<Workflow | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<N9nFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<"flow" | "runs">("flow");
+  const [view, setView] = useState<"flow" | "runs" | "credentials" | "audit" | "account">("flow");
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
+  const [credentials, setCredentials] = useState<CredentialSummary[]>([]);
   const [service, setService] = useState<ServiceStatus | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -397,12 +408,14 @@ export function WorkflowStudio() {
 
   const load = useCallback(async () => {
     try {
-      const [flowList, currentStatus] = await Promise.all([
-        jsonRequest<Workflow[]>("/api/workflows"),
-        jsonRequest<ServiceStatus>("/api/status"),
+      const [flowList, currentStatus, credentialList] = await Promise.all([
+        jsonRequest<Workflow[]>("/api/workflows", csrfToken),
+        jsonRequest<ServiceStatus>("/api/status", csrfToken),
+        jsonRequest<CredentialSummary[]>("/api/credentials", csrfToken),
       ]);
       setWorkflows(flowList);
       setService(currentStatus);
+      setCredentials(credentialList);
       setActive((current) => {
         if (current) {
           return flowList.find((item) => item.id === current.id) ?? flowList[0];
@@ -412,7 +425,12 @@ export function WorkflowStudio() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not load 9n9");
     }
-  }, []);
+  }, [csrfToken]);
+
+  const loadCredentials = useCallback(async () => {
+    const list = await jsonRequest<CredentialSummary[]>("/api/credentials", csrfToken);
+    setCredentials(list);
+  }, [csrfToken]);
 
   useEffect(() => {
     void load();
@@ -435,11 +453,11 @@ export function WorkflowStudio() {
 
   const loadRuns = useCallback(async () => {
     try {
-      setRuns(await jsonRequest<WorkflowRun[]>("/api/runs"));
+      setRuns(await jsonRequest<WorkflowRun[]>("/api/runs", csrfToken));
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not load runs");
     }
-  }, []);
+  }, [csrfToken]);
 
   useEffect(() => {
     if (view === "runs") void loadRuns();
@@ -551,6 +569,7 @@ export function WorkflowStudio() {
       try {
         const saved = await jsonRequest<Workflow>(
           "/api/workflows/" + active.id,
+          csrfToken,
           {
             method: "PUT",
             body: JSON.stringify({
@@ -577,12 +596,12 @@ export function WorkflowStudio() {
         setSaving(false);
       }
     },
-    [active, edges, nodes],
+    [active, csrfToken, edges, nodes],
   );
 
   const createFlow = async () => {
     try {
-      const created = await jsonRequest<Workflow>("/api/workflows", {
+      const created = await jsonRequest<Workflow>("/api/workflows", csrfToken, {
         method: "POST",
         body: JSON.stringify({ name: "Untitled flow" }),
       });
@@ -614,7 +633,7 @@ export function WorkflowStudio() {
     try {
       const response = await fetch("/api/workflows/" + saved.id + "/run", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-9n9-csrf": csrfToken },
         body: JSON.stringify({ input: {} }),
       });
       const result = (await response.json()) as WorkflowRun;
@@ -655,7 +674,7 @@ export function WorkflowStudio() {
         "/api/workflows/" + saved.id + "/nodes/" + selectedNode.id + "/test",
         {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", "x-9n9-csrf": csrfToken },
           body: JSON.stringify({ input, steps: {} }),
         },
       );
@@ -900,6 +919,29 @@ export function WorkflowStudio() {
     setValidationOpen(false);
   };
 
+  const rotateWebhook = async () => {
+    if (!active) return null;
+    const result = await jsonRequest<{ token: string }>(
+      `/api/workflows/${active.id}/webhook-token`,
+      csrfToken,
+      { method: "POST", body: "{}" },
+    );
+    const updated = { ...active, webhookProtected: true, webhookToken: result.token };
+    setActive(updated);
+    setWorkflows((items) => items.map((item) => item.id === updated.id ? updated : item));
+    setNotice("Webhook token rotated");
+    return result.token;
+  };
+
+  const logout = async () => {
+    try {
+      await jsonRequest("/api/auth/logout", csrfToken, { method: "POST", body: "{}" });
+      window.location.reload();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not sign out");
+    }
+  };
+
   return (
     <main className="shell">
       <aside className="sidebar">
@@ -923,6 +965,15 @@ export function WorkflowStudio() {
             onClick={() => setView("runs")}
           >
             <History size={17} /> Runs
+          </button>
+          <button className={view === "credentials" ? "is-active" : ""} onClick={() => setView("credentials")}>
+            <KeyRound size={17} /> Credentials
+          </button>
+          <button className={view === "audit" ? "is-active" : ""} onClick={() => setView("audit")}>
+            <ShieldCheck size={17} /> Audit
+          </button>
+          <button className={view === "account" ? "is-active" : ""} onClick={() => setView("account")}>
+            <UserRound size={17} /> Security
           </button>
         </nav>
 
@@ -965,12 +1016,18 @@ export function WorkflowStudio() {
             />
             Local Codex
           </div>
-          <strong>{service?.codex ?? "checking"}</strong>
+          <button className="sidebar__logout" onClick={logout} title={`Sign out ${username}`} aria-label="Sign out"><LogOut size={14} /></button>
         </div>
       </aside>
 
       <section className="workspace">
-        {view === "runs" ? (
+        {view === "credentials" ? (
+          <CredentialsView csrfToken={csrfToken} credentials={credentials} onRefresh={loadCredentials} />
+        ) : view === "audit" ? (
+          <AuditView csrfToken={csrfToken} />
+        ) : view === "account" ? (
+          <AccountView csrfToken={csrfToken} username={username} />
+        ) : view === "runs" ? (
           <RunsView runs={runs} onRefresh={loadRuns} />
         ) : active ? (
           <>
@@ -1171,6 +1228,8 @@ export function WorkflowStudio() {
                 testResult={nodeTestResult}
                 testing={testingNodeId === selectedNode?.id}
                 onTest={() => void testSelectedNode()}
+                credentials={credentials}
+                onRotateWebhook={rotateWebhook}
               />
             </div>
           </>
@@ -1292,6 +1351,8 @@ function Inspector({
   testResult,
   testing,
   onTest,
+  credentials,
+  onRotateWebhook,
 }: {
   node: N9nFlowNode | null;
   workflow: Workflow;
@@ -1305,9 +1366,15 @@ function Inspector({
   testResult: NodeTestResult | null;
   testing: boolean;
   onTest: () => void;
+  credentials: CredentialSummary[];
+  onRotateWebhook: () => Promise<string | null>;
 }) {
   const availableFields = node ? (templateFields[node.data.kind] ?? []) : [];
   const [expressionTarget, setExpressionTarget] = useState("");
+  const [shownWebhookToken, setShownWebhookToken] = useState(workflow.webhookToken ?? "");
+  useEffect(() => {
+    setShownWebhookToken(workflow.webhookToken ?? "");
+  }, [workflow.id, workflow.webhookToken]);
   const activeExpressionTarget = availableFields.some(
     (field) => field.key === expressionTarget,
   )
@@ -1406,6 +1473,14 @@ function Inspector({
 
       {node.data.kind === "action.http" && (
         <>
+          <Field label="Credential" hint="Secrets are injected only on the server and never enter expressions.">
+            <select aria-label="Credential" value={text("credentialId")} onChange={(event) => onConfig("credentialId", event.target.value)}>
+              <option value="">No credential</option>
+              {credentials.filter((credential) => credential.type !== "ssh_key").map((credential) => (
+                <option key={credential.id} value={credential.id}>{credential.name} · {credential.masked}</option>
+              ))}
+            </select>
+          </Field>
           <Field label="Method">
             <select value={text("method") || "GET"} onChange={(event) => onConfig("method", event.target.value)}>
               {["GET", "POST", "PUT", "PATCH", "DELETE"].map((method) => (
@@ -1492,7 +1567,10 @@ function Inspector({
           <div>
             <span>Webhook path</span>
             <code>/hooks/{workflow.slug}</code>
-            <small>Enable the flow before calling it.</small>
+            <small>Enable the flow and send the token as a Bearer token or X-9n9-Webhook-Token.</small>
+            {shownWebhookToken && <code className="secret-once">{shownWebhookToken}</code>}
+            {shownWebhookToken && <small>Copy now. This token is shown only once.</small>}
+            <button className="button button--quiet" onClick={async () => { const token = await onRotateWebhook(); if (token) setShownWebhookToken(token); }}>Rotate token</button>
           </div>
         </div>
       )}

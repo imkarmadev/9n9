@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeWorkflow } from "@/lib/executor";
-import { getWorkflowBySlug } from "@/lib/repository";
+import { getWorkflowBySlug, verifyWebhookToken } from "@/lib/repository";
+import { audit, clientIp } from "@/lib/security";
+import { redactSecrets } from "@/lib/redaction";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +20,19 @@ async function trigger(request: NextRequest, context: RouteContext) {
     );
   }
 
+  const authorization = request.headers.get("authorization") ?? "";
+  const token = authorization.startsWith("Bearer ")
+    ? authorization.slice(7)
+    : request.headers.get("x-9n9-webhook-token") ?? "";
+  if (!token || !verifyWebhookToken(workflow.id, token)) {
+    audit("webhook.denied", {
+      resourceType: "workflow",
+      resourceId: workflow.id,
+      ip: clientIp(request),
+    });
+    return NextResponse.json({ error: "Invalid webhook token" }, { status: 401 });
+  }
+
   let body: unknown = null;
   if (request.method !== "GET") {
     const contentType = request.headers.get("content-type") ?? "";
@@ -26,12 +41,12 @@ async function trigger(request: NextRequest, context: RouteContext) {
       : await request.text();
   }
 
-  const input = {
+  const input = redactSecrets({
     method: request.method,
     query: Object.fromEntries(request.nextUrl.searchParams),
     headers: Object.fromEntries(request.headers),
     body,
-  };
+  }, [token]);
 
   const run = await executeWorkflow(workflow, "webhook", input);
   return NextResponse.json(run.output ?? run, {

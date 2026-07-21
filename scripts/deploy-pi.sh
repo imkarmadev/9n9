@@ -31,6 +31,29 @@ rsync \
   ./ "${PI_TARGET}:${PI_PATH}/"
 
 echo "==> Rebuilding the Pi service"
+ssh "${PI_TARGET}" "sudo -n bash -s -- '${PI_PATH}' '${PI_URL}'" <<'REMOTE_SECURITY_ENV'
+set -Eeuo pipefail
+project_path="$1"
+public_origin="$2"
+env_file="${project_path}/.env"
+password_file="${project_path}/.initial-admin-password"
+touch "${env_file}"
+if ! grep -q '^N9N_MASTER_KEY=' "${env_file}"; then
+  printf 'N9N_MASTER_KEY=%s\n' "$(openssl rand -base64 32 | tr -d '\n')" >> "${env_file}"
+fi
+if ! grep -q '^N9N_BOOTSTRAP_ADMIN_PASSWORD=' "${env_file}"; then
+  admin_password="$(openssl rand -base64 24 | tr -d '\n')"
+  printf 'N9N_BOOTSTRAP_ADMIN_USERNAME=admin\n' >> "${env_file}"
+  printf 'N9N_BOOTSTRAP_ADMIN_PASSWORD=%s\n' "${admin_password}" >> "${env_file}"
+  printf '%s' "${admin_password}" > "${password_file}"
+fi
+if ! grep -q '^N9N_PUBLIC_ORIGIN=' "${env_file}"; then
+  printf 'N9N_PUBLIC_ORIGIN=%s\n' "${public_origin}" >> "${env_file}"
+fi
+chmod 600 "${env_file}"
+if [[ -f "${password_file}" ]]; then chmod 600 "${password_file}"; fi
+REMOTE_SECURITY_ENV
+
 ssh "${PI_TARGET}" \
   "cd '${PI_PATH}' && sudo -n docker compose up -d --build --remove-orphans && sudo -n docker compose ps"
 
@@ -45,7 +68,20 @@ curl \
   "${PI_URL}/api/status"
 echo
 
+echo "==> Creating a short-lived deployment test session"
+curl --fail --silent --show-error "${PI_URL}/" >/dev/null
+mapfile -t E2E_SESSION < <(
+  ssh "${PI_TARGET}" "sudo -n docker exec 9n9 node /app/scripts/create-test-session.mjs"
+)
+if [[ "${#E2E_SESSION[@]}" -ne 2 ]]; then
+  echo "Could not create the deployment test session" >&2
+  exit 1
+fi
+
 echo "==> Running browser tests against the deployed Pi"
-PLAYWRIGHT_BASE_URL="${PI_URL}" npm run test:e2e
+N9N_E2E_SESSION_TOKEN="${E2E_SESSION[0]}" \
+  N9N_E2E_CSRF_TOKEN="${E2E_SESSION[1]}" \
+  PLAYWRIGHT_BASE_URL="${PI_URL}" npm run test:e2e
+unset E2E_SESSION
 
 echo "==> 9n9 is deployed and healthy"

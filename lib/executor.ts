@@ -4,6 +4,13 @@ import {
   getWorkflow,
 } from "./repository";
 import { resolveTemplate } from "./template";
+import {
+  applyHttpCredential,
+  credentialSecretValues,
+  getCredential,
+  markCredentialUsed,
+} from "./credentials";
+import { redactSecrets } from "./redaction";
 import type {
   NodeConfig,
   NodeTestResult,
@@ -97,6 +104,16 @@ async function runHttp(config: NodeConfig, context: ExecutionContext) {
     }
   }
 
+  let credentialSecrets: string[] = [];
+  const credentialId = asString(resolved.credentialId);
+  if (credentialId) {
+    const credential = getCredential(credentialId);
+    if (!credential) throw new Error("Selected credential no longer exists");
+    credentialSecrets = credentialSecretValues(credential.data);
+    applyHttpCredential(credential.summary.type, credential.data, headers);
+    markCredentialUsed(credentialId);
+  }
+
   const init: RequestInit = {
     method,
     headers,
@@ -122,15 +139,15 @@ async function runHttp(config: NodeConfig, context: ExecutionContext) {
   const body = await responseBody(response);
   if (!response.ok) {
     throw new Error(
-      "HTTP " + response.status + ": " + asString(body, response.statusText),
+      "HTTP " + response.status + ": " + asString(redactSecrets(body, credentialSecrets), response.statusText),
     );
   }
 
-  return {
+  return redactSecrets({
     status: response.status,
     headers: Object.fromEntries(response.headers.entries()),
     body,
-  };
+  }, credentialSecrets);
 }
 
 async function runCodex(config: NodeConfig, context: ExecutionContext) {

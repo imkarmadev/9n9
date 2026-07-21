@@ -4,11 +4,14 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 type Workflow = {
   id: string;
   name: string;
   slug: string;
+  webhookToken?: string;
   graph: {
     nodes: Array<Record<string, unknown>>;
     edges: Array<Record<string, unknown>>;
@@ -16,6 +19,14 @@ type Workflow = {
 };
 
 let createdWorkflowIds: string[] = [];
+
+function secureHeaders() {
+  const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${process.env.PLAYWRIGHT_PORT ?? "3109"}`;
+  return {
+    origin: baseURL,
+    "x-9n9-csrf": readFileSync(path.join(process.cwd(), ".test-data", "csrf-token"), "utf8"),
+  };
+}
 
 async function createWorkflow(
   request: APIRequestContext,
@@ -27,9 +38,11 @@ async function createWorkflow(
 ) {
   const createResponse = await request.post("/api/workflows", {
     data: { name },
+    headers: secureHeaders(),
   });
   expect(createResponse.ok()).toBeTruthy();
   let workflow = (await createResponse.json()) as Workflow;
+  const webhookToken = workflow.webhookToken;
   createdWorkflowIds.push(workflow.id);
 
   if (options?.graph || options?.enabled !== undefined) {
@@ -40,10 +53,11 @@ async function createWorkflow(
           enabled: options.enabled,
           graph: options.graph,
         },
+        headers: secureHeaders(),
       },
     );
     expect(updateResponse.ok()).toBeTruthy();
-    workflow = (await updateResponse.json()) as Workflow;
+    workflow = { ...(await updateResponse.json()) as Workflow, webhookToken };
   }
 
   return workflow;
@@ -105,7 +119,7 @@ test.beforeEach(() => {
 test.afterEach(async ({ request }) => {
   await Promise.all(
     createdWorkflowIds.map((id) =>
-      request.delete("/api/workflows/" + id),
+      request.delete("/api/workflows/" + id, { headers: secureHeaders() }),
     ),
   );
 });
@@ -304,6 +318,7 @@ test("an enabled webhook executes and appears in run history", async ({
 
   const hookResponse = await request.post("/hooks/" + workflow.slug, {
     data: { value: 42 },
+    headers: { authorization: `Bearer ${workflow.webhookToken}` },
   });
   expect(hookResponse.ok()).toBeTruthy();
   await expect(hookResponse.json()).resolves.toEqual({

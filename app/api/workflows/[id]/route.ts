@@ -6,13 +6,16 @@ import {
 } from "@/lib/repository";
 import { refreshSchedules } from "@/lib/scheduler";
 import type { WorkflowGraph } from "@/lib/types";
+import { authorize } from "@/lib/security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-export async function GET(_: NextRequest, context: RouteContext) {
+export async function GET(request: NextRequest, context: RouteContext) {
+  const auth = authorize(request);
+  if ("response" in auth) return auth.response;
   const { id } = await context.params;
   const workflow = getWorkflow(id);
   if (!workflow) {
@@ -22,6 +25,8 @@ export async function GET(_: NextRequest, context: RouteContext) {
 }
 
 export async function PUT(request: NextRequest, context: RouteContext) {
+  const auth = authorize(request, true);
+  if ("response" in auth) return auth.response;
   const { id } = await context.params;
   const body = await request.json().catch(() => ({}));
 
@@ -46,7 +51,9 @@ export async function PUT(request: NextRequest, context: RouteContext) {
   return NextResponse.json(workflow);
 }
 
-export async function DELETE(_: NextRequest, context: RouteContext) {
+export async function DELETE(request: NextRequest, context: RouteContext) {
+  const auth = authorize(request, true);
+  if ("response" in auth) return auth.response;
   const { id } = await context.params;
   if (!deleteWorkflow(id)) {
     return NextResponse.json({ error: "Workflow not found" }, { status: 404 });

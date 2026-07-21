@@ -17,6 +17,11 @@ for Codex: 9n9 calls the private, already-authenticated `codex-agent` bridge.
 - Manual, webhook, and cron triggers
 - Local Codex, HTTP, compose, and condition nodes
 - SQLite workflow storage and run history
+- First-run local admin, hardened sessions, CSRF, rate limits, and audit log
+- AES-256-GCM encrypted local credentials with API key, bearer, basic, OAuth,
+  and SSH key types
+- Server-only credential injection with masking/redaction in APIs and run data
+- Token-authenticated webhooks with one-time display and immediate rotation
 - Docker image for arm64 and amd64
 - Template values such as `{{input.body}}` and `{{steps.nodeId.body}}`
 
@@ -35,6 +40,7 @@ Requires Node.js 22 or newer.
 
 ```bash
 cp .env.example .env
+sed -i.bak "s|^N9N_MASTER_KEY=.*|N9N_MASTER_KEY=$(openssl rand -base64 32)|" .env
 npm ci
 npx playwright install chromium
 npm run dev
@@ -51,9 +57,11 @@ npm run check
 ```
 
 That runs ESLint, a production Next.js build, and the Playwright browser suite.
-The browser tests use an isolated temporary SQLite database and cover adding and
-configuring nodes, saving a durable graph, running a flow, webhooks, and run
-history. Failure screenshots, traces, and videos are written to `test-results/`.
+The browser tests use an isolated temporary SQLite database and cover auth and
+CSRF boundaries, hardened cookies, login rate limits, encrypted/masked
+credentials, server-side secret injection and redaction, webhook rotation,
+editing, execution, and run history. Failure screenshots, traces, and videos
+are written to `test-results/`.
 
 For faster browser-test iteration:
 
@@ -86,6 +94,16 @@ docker compose up -d --build
 
 Open `http://YOUR_PI_IP:9999`.
 
+The deploy script creates the master key and an initial random admin password
+without printing either one. Retrieve the initial password over SSH:
+
+```bash
+ssh imkarma@192.168.1.95 'sudo cat /opt/9n9/.initial-admin-password'
+```
+
+Sign in as `admin`, then change it from **Security**. The initial-password file
+is only for first access and is not rewritten when you change the password.
+
 From a development machine on the same LAN, deploy only after all checks pass:
 
 ```bash
@@ -107,8 +125,11 @@ docker network connect codex-private codex-agent
 Then change the `codex` network name in `docker-compose.yml` to
 `codex-private` and redeploy.
 
-Keep port `9999` on your trusted LAN or behind a reverse proxy. Version 0.1
-intentionally has no multi-user authentication.
+Keep port `9999` on your trusted LAN or behind a reverse proxy. Set
+`N9N_PUBLIC_ORIGIN` to the exact browser origin so origin and CSRF validation
+remain strict. `N9N_TRUSTED_LAN_ONLY=true` adds the optional application-level
+LAN check; a host firewall or private-interface bind remains the stronger
+network boundary.
 
 ## Webhooks
 
@@ -116,9 +137,15 @@ Enable a flow containing a Webhook trigger, then call:
 
 ```bash
 curl -X POST http://YOUR_PI_IP:9999/hooks/FLOW_SLUG \
+  -H 'authorization: Bearer YOUR_ONE_TIME_WEBHOOK_TOKEN' \
   -H 'content-type: application/json' \
   -d '{"message":"hello"}'
 ```
+
+Create or rotate the token from the Webhook node inspector. 9n9 stores only
+its SHA-256 digest, so the raw token cannot be recovered later.
+
+The complete product plan is tracked in [ROADMAP.md](./ROADMAP.md).
 
 ## License
 

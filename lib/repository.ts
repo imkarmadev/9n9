@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { db } from "./db";
+import { audit, hashToken, newSecretToken, verifyToken } from "./security";
 import {
   EMPTY_GRAPH,
   type Workflow,
@@ -15,6 +16,7 @@ interface WorkflowRow {
   graph: string;
   created_at: string;
   updated_at: string;
+  webhook_token_hash: string | null;
 }
 
 interface RunRow {
@@ -49,6 +51,7 @@ function mapWorkflow(row: WorkflowRow): Workflow {
     graph: parseJson(row.graph, EMPTY_GRAPH) as WorkflowGraph,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    webhookProtected: Boolean(row.webhook_token_hash),
   };
 }
 
@@ -162,14 +165,36 @@ export function createWorkflow(name = "Untitled flow"): Workflow {
   const id = randomUUID();
   const now = new Date().toISOString();
   const slug = uniqueSlug(name);
+  const webhookToken = newSecretToken();
 
   db.prepare(
     `INSERT INTO workflows
-      (id, name, slug, enabled, graph, created_at, updated_at)
-     VALUES (?, ?, ?, 0, ?, ?, ?)` ,
-  ).run(id, name, slug, JSON.stringify(EMPTY_GRAPH), now, now);
+      (id, name, slug, enabled, graph, webhook_token_hash, created_at, updated_at)
+     VALUES (?, ?, ?, 0, ?, ?, ?, ?)` ,
+  ).run(id, name, slug, JSON.stringify(EMPTY_GRAPH), hashToken(webhookToken), now, now);
 
-  return getWorkflow(id)!;
+  return { ...getWorkflow(id)!, webhookToken };
+}
+
+export function rotateWebhookToken(
+  id: string,
+  actor?: { userId?: string; ip?: string },
+) {
+  if (!getWorkflow(id)) return null;
+  const token = newSecretToken();
+  db.prepare("UPDATE workflows SET webhook_token_hash = ?, updated_at = ? WHERE id = ?")
+    .run(hashToken(token), new Date().toISOString(), id);
+  audit("webhook.token_rotated", {
+    ...actor,
+    resourceType: "workflow",
+    resourceId: id,
+  });
+  return { token };
+}
+
+export function verifyWebhookToken(workflowId: string, token: string) {
+  const row = db.prepare("SELECT webhook_token_hash FROM workflows WHERE id = ?").get(workflowId) as { webhook_token_hash: string | null } | undefined;
+  return Boolean(row?.webhook_token_hash && verifyToken(token, row.webhook_token_hash));
 }
 
 export function updateWorkflow(

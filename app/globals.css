@@ -256,6 +256,223 @@ select:focus-visible {
   text-transform: uppercase;
 }
 
+.sidebar__logout {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.sidebar__logout:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.auth-shell {
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 28%, rgba(181, 244, 69, 0.08), transparent 28%),
+    var(--bg);
+}
+
+.auth-card {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 16px;
+  padding: 26px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+
+.brand--auth {
+  height: auto;
+  padding: 0 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.auth-card__icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 11px;
+  background: rgba(181, 244, 69, 0.1);
+  color: var(--lime);
+}
+
+.auth-card h1,
+.auth-card p {
+  margin: 0;
+}
+
+.auth-card p,
+.auth-card > small {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.auth-error,
+.form-notice {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 125, 125, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 125, 125, 0.06);
+  color: var(--red);
+  font-size: 12px;
+}
+
+.auth-submit {
+  width: 100%;
+  justify-content: center;
+}
+
+.security-view {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.security-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.2fr);
+  gap: 18px;
+  padding: 22px;
+}
+
+.credential-list,
+.credential-form,
+.audit-table {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.credential-list {
+  display: flex;
+  min-height: 420px;
+  flex-direction: column;
+  padding: 8px;
+}
+
+.credential-list > button {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.credential-list > button:hover,
+.credential-list > button.is-active {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.credential-list > button.is-active svg {
+  color: var(--lime);
+}
+
+.credential-list button span {
+  display: grid;
+  gap: 4px;
+}
+
+.credential-list button small {
+  color: var(--muted-2);
+}
+
+.credential-form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  padding: 22px;
+}
+
+.credential-form h2 {
+  margin: 0 0 5px;
+  font-size: 17px;
+}
+
+.credential-form > small {
+  color: var(--muted);
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.button--danger {
+  margin-right: auto;
+  border-color: rgba(255, 125, 125, 0.25);
+  color: var(--red);
+}
+
+.account-form {
+  width: min(560px, calc(100% - 44px));
+  min-height: 0;
+  margin: 22px;
+}
+
+.audit-table {
+  margin: 22px;
+  overflow: hidden;
+}
+
+.audit-table > div:not(.runs-empty) {
+  display: grid;
+  grid-template-columns: 22px minmax(180px, 1fr) minmax(90px, 0.5fr) minmax(90px, 0.5fr) 180px;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.audit-table svg {
+  color: var(--lime);
+}
+
+.audit-table strong {
+  color: var(--text);
+}
+
+.secret-once {
+  display: block;
+  max-width: 100%;
+  padding: 7px;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(181, 244, 69, 0.22);
+  border-radius: 6px;
+  color: var(--lime) !important;
+}
+
+@media (max-width: 900px) {
+  .security-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .workspace {
   display: flex;
   min-width: 0;

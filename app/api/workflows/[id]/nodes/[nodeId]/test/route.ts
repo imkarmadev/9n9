@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { testWorkflowNode } from "@/lib/executor";
+import { authorize } from "@/lib/security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +10,8 @@ type RouteContext = {
 };
 
 export async function POST(request: NextRequest, context: RouteContext) {
+  const auth = authorize(request, true);
+  if ("response" in auth) return auth.response;
   const { id, nodeId } = await context.params;
   const body = await request.json().catch(() => ({}));
 
