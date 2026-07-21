@@ -6,6 +6,7 @@ import {
 import { resolveTemplate } from "./template";
 import type {
   NodeConfig,
+  NodeTestResult,
   RunTrace,
   Workflow,
   WorkflowNode,
@@ -18,6 +19,46 @@ const CODEX_AGENT_URL =
 function asString(value: unknown, fallback = "") {
   if (value === undefined || value === null) return fallback;
   return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+export async function testWorkflowNode(
+  workflowOrId: Workflow | string,
+  nodeId: string,
+  input: unknown = {},
+  steps: Record<string, unknown> = {},
+): Promise<NodeTestResult> {
+  const workflow =
+    typeof workflowOrId === "string"
+      ? getWorkflow(workflowOrId)
+      : workflowOrId;
+  if (!workflow) throw new Error("Workflow not found");
+
+  const node = workflow.graph.nodes.find((item) => item.id === nodeId);
+  if (!node) throw new Error("Node not found");
+
+  const startedAt = Date.now();
+  try {
+    const output = await executeNode(node, { input, steps });
+    return {
+      nodeId: node.id,
+      label: node.data.label,
+      kind: node.data.kind,
+      status: "success",
+      input,
+      output: safeOutput(output),
+      durationMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      nodeId: node.id,
+      label: node.data.label,
+      kind: node.data.kind,
+      status: "failed",
+      input,
+      error: error instanceof Error ? error.message : "Unknown node error",
+      durationMs: Date.now() - startedAt,
+    };
+  }
 }
 
 function safeOutput(value: unknown) {

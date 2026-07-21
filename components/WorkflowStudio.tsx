@@ -4,7 +4,9 @@
 import {
   Background,
   BackgroundVariant,
+  ConnectionMode,
   Controls,
+  MarkerType,
   ReactFlow,
   addEdge,
   useEdgesState,
@@ -17,6 +19,7 @@ import {
 } from "@xyflow/react";
 import {
   Activity,
+  AlertTriangle,
   Braces,
   Check,
   ChevronRight,
@@ -26,11 +29,14 @@ import {
   GitBranch,
   Globe2,
   History,
+  FlaskConical,
   MousePointerClick,
   Play,
   Plus,
+  Redo2,
   Save,
   Settings2,
+  Undo2,
   Webhook,
   X,
   Zap,
@@ -42,26 +48,52 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type DragEvent as ReactDragEvent,
 } from "react";
 import { FlowNode, type N9nFlowNode } from "./FlowNode";
 import type {
   NodeConfig,
   NodeKind,
+  NodeTestResult,
   Workflow,
   WorkflowEdge,
   WorkflowNode,
   WorkflowRun,
 } from "@/lib/types";
+import {
+  validateWorkflowGraph,
+  wouldCreateCycle,
+  type ValidationIssue,
+} from "@/lib/workflow-validation";
 
 const nodeTypes = { n9n: FlowNode };
 
-const NODE_WIDTH = 246;
-const NODE_HEIGHT = 92;
+const NODE_WIDTH = 216;
+const NODE_HEIGHT = 68;
 const NODE_GAP = 40;
+const DRAG_MIME = "application/x-9n9-node-kind";
+const HISTORY_LIMIT = 100;
+
+type GraphSnapshot = {
+  nodes: N9nFlowNode[];
+  edges: Edge[];
+};
+
+type PositionBounds = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+function cloneGraph(nodes: N9nFlowNode[], edges: Edge[]): GraphSnapshot {
+  return structuredClone({ nodes, edges });
+}
 
 function findOpenNodePosition(
   center: { x: number; y: number },
   nodes: N9nFlowNode[],
+  bounds?: PositionBounds,
 ) {
   const origin = {
     x: center.x - NODE_WIDTH / 2,
@@ -71,17 +103,21 @@ function findOpenNodePosition(
   const stepY = NODE_HEIGHT + NODE_GAP;
   const offsets = [
     [0, 0],
-    [1, 0],
-    [-1, 0],
     [0, 1],
     [0, -1],
+    [1, 0],
+    [-1, 0],
     [1, 1],
     [-1, 1],
     [1, -1],
     [-1, -1],
+    [0, 2],
+    [0, -2],
     [2, 0],
     [-2, 0],
   ];
+
+  let firstOpen: { x: number; y: number } | null = null;
 
   for (const [column, row] of offsets) {
     const candidate = {
@@ -97,13 +133,24 @@ function findOpenNodePosition(
         existing.y + NODE_HEIGHT + NODE_GAP <= candidate.y
       );
     });
-    if (isOpen) return candidate;
+    if (!isOpen) continue;
+    firstOpen ??= candidate;
+    const isInside =
+      !bounds ||
+      (candidate.x >= bounds.left &&
+        candidate.x <= bounds.right &&
+        candidate.y >= bounds.top &&
+        candidate.y <= bounds.bottom);
+    if (isInside) return candidate;
   }
 
-  return {
-    x: origin.x + stepX * (nodes.length + 1),
-    y: origin.y,
-  };
+  const fallback = firstOpen ?? origin;
+  return bounds
+    ? {
+        x: Math.max(bounds.left, Math.min(fallback.x, bounds.right)),
+        y: Math.max(bounds.top, Math.min(fallback.y, bounds.bottom)),
+      }
+    : fallback;
 }
 
 function createNodeId(kind: NodeKind) {
@@ -217,6 +264,25 @@ const palette: Array<{
   },
 ];
 
+const templateFields: Partial<
+  Record<NodeKind, Array<{ key: string; label: string }>>
+> = {
+  "action.codex": [
+    { key: "prompt", label: "Prompt" },
+    { key: "cwd", label: "Workspace" },
+  ],
+  "action.http": [
+    { key: "url", label: "URL" },
+    { key: "headers", label: "Headers" },
+    { key: "body", label: "Body" },
+  ],
+  "data.compose": [{ key: "value", label: "Value" }],
+  "logic.condition": [
+    { key: "left", label: "Left value" },
+    { key: "right", label: "Right value" },
+  ],
+};
+
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -277,16 +343,57 @@ export function WorkflowStudio() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [validationOpen, setValidationOpen] = useState(false);
+  const [historyAvailability, setHistoryAvailability] = useState({
+    canUndo: false,
+    canRedo: false,
+  });
+  const [testingNodeId, setTestingNodeId] = useState<string | null>(null);
+  const [nodeTestInput, setNodeTestInput] = useState("{}");
+  const [nodeTestResult, setNodeTestResult] =
+    useState<NodeTestResult | null>(null);
   const [notice, setNotice] = useState("Ready");
   const [runResult, setRunResult] = useState<WorkflowRun | null>(null);
   const [flowInstance, setFlowInstance] =
     useState<ReactFlowInstance<N9nFlowNode, Edge> | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const pastRef = useRef<GraphSnapshot[]>([]);
+  const futureRef = useRef<GraphSnapshot[]>([]);
+  const connectingRef = useRef(false);
+  const hydratedWorkflowIdRef = useRef<string | null>(null);
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedId) ?? null,
     [nodes, selectedId],
   );
+  const validationIssues = useMemo(
+    () => validateWorkflowGraph(serializeNodes(nodes), serializeEdges(edges)),
+    [edges, nodes],
+  );
+  const invalidNodeIds = useMemo(
+    () =>
+      new Set(
+        validationIssues.flatMap((issue) =>
+          issue.nodeId ? [issue.nodeId] : [],
+        ),
+      ),
+    [validationIssues],
+  );
+  const renderNodes = useMemo(
+    () =>
+      nodes.map((node) => ({
+        ...node,
+        className: [
+          typeof node.className === "string" ? node.className : "",
+          invalidNodeIds.has(node.id) ? "has-validation-error" : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      })),
+    [invalidNodeIds, nodes],
+  );
+  const { canUndo, canRedo } = historyAvailability;
 
   const load = useCallback(async () => {
     try {
@@ -313,11 +420,17 @@ export function WorkflowStudio() {
 
   useEffect(() => {
     if (!active) return;
+    if (hydratedWorkflowIdRef.current === active.id) return;
+    hydratedWorkflowIdRef.current = active.id;
     setNodes(toFlowNodes(active));
     setEdges(active.graph.edges);
     setSelectedId(null);
     setDirty(false);
     setRunResult(null);
+    setNodeTestResult(null);
+    pastRef.current = [];
+    futureRef.current = [];
+    setHistoryAvailability({ canUndo: false, canRedo: false });
   }, [active, setEdges, setNodes]);
 
   const loadRuns = useCallback(async () => {
@@ -331,6 +444,104 @@ export function WorkflowStudio() {
   useEffect(() => {
     if (view === "runs") void loadRuns();
   }, [loadRuns, view]);
+
+  const recordHistory = useCallback(() => {
+    pastRef.current = [
+      ...pastRef.current.slice(-(HISTORY_LIMIT - 1)),
+      cloneGraph(nodes, edges),
+    ];
+    futureRef.current = [];
+    setHistoryAvailability({ canUndo: true, canRedo: false });
+  }, [edges, nodes]);
+
+  const undo = useCallback(() => {
+    const snapshot = pastRef.current.at(-1);
+    if (!snapshot) return;
+    futureRef.current = [cloneGraph(nodes, edges), ...futureRef.current];
+    pastRef.current = pastRef.current.slice(0, -1);
+    setNodes(snapshot.nodes);
+    setEdges(snapshot.edges);
+    setSelectedId(null);
+    setDirty(true);
+    setNotice("Undid graph change");
+    setHistoryAvailability({
+      canUndo: pastRef.current.length > 0,
+      canRedo: true,
+    });
+  }, [edges, nodes, setEdges, setNodes]);
+
+  const redo = useCallback(() => {
+    const snapshot = futureRef.current[0];
+    if (!snapshot) return;
+    pastRef.current = [
+      ...pastRef.current.slice(-(HISTORY_LIMIT - 1)),
+      cloneGraph(nodes, edges),
+    ];
+    futureRef.current = futureRef.current.slice(1);
+    setNodes(snapshot.nodes);
+    setEdges(snapshot.edges);
+    setSelectedId(null);
+    setDirty(true);
+    setNotice("Redid graph change");
+    setHistoryAvailability({
+      canUndo: true,
+      canRedo: futureRef.current.length > 0,
+    });
+  }, [edges, nodes, setEdges, setNodes]);
+
+  useEffect(() => {
+    const handleKeyboard = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isEditing =
+        target?.matches("input, textarea, select, [contenteditable='true']") ??
+        false;
+      if (isEditing) return;
+
+      const command = event.metaKey || event.ctrlKey;
+      if (command && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (command && event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        redo();
+        return;
+      }
+      if (event.key !== "Backspace" && event.key !== "Delete") return;
+
+      const selectedNodeIds = new Set(
+        nodes
+          .filter((node) => node.selected || node.id === selectedId)
+          .map((node) => node.id),
+      );
+      const selectedEdgeIds = new Set(
+        edges.filter((edge) => edge.selected).map((edge) => edge.id),
+      );
+      if (selectedNodeIds.size === 0 && selectedEdgeIds.size === 0) return;
+
+      event.preventDefault();
+      recordHistory();
+      setNodes((items) =>
+        items.filter((node) => !selectedNodeIds.has(node.id)),
+      );
+      setEdges((items) =>
+        items.filter(
+          (edge) =>
+            !selectedEdgeIds.has(edge.id) &&
+            !selectedNodeIds.has(edge.source) &&
+            !selectedNodeIds.has(edge.target),
+        ),
+      );
+      setSelectedId(null);
+      setDirty(true);
+      setNotice("Deleted selection");
+    };
+
+    window.addEventListener("keydown", handleKeyboard);
+    return () => window.removeEventListener("keydown", handleKeyboard);
+  }, [edges, nodes, recordHistory, redo, selectedId, setEdges, setNodes, undo]);
 
   const persist = useCallback(
     async (enabledOverride?: boolean) => {
@@ -385,6 +596,15 @@ export function WorkflowStudio() {
 
   const runFlow = async () => {
     if (!active) return;
+    if (validationIssues.length > 0) {
+      setValidationOpen(true);
+      setNotice(
+        validationIssues.length === 1
+          ? "Fix 1 validation issue before running"
+          : "Fix " + validationIssues.length + " validation issues before running",
+      );
+      return;
+    }
     const saved = await persist();
     if (!saved) return;
 
@@ -407,22 +627,97 @@ export function WorkflowStudio() {
     }
   };
 
+  const testSelectedNode = async () => {
+    if (!active || !selectedNode) return;
+    let input: unknown;
+    try {
+      input = JSON.parse(nodeTestInput);
+    } catch {
+      setNodeTestResult({
+        nodeId: selectedNode.id,
+        label: selectedNode.data.label,
+        kind: selectedNode.data.kind,
+        status: "failed",
+        input: nodeTestInput,
+        error: "Test input must be valid JSON",
+        durationMs: 0,
+      });
+      return;
+    }
+
+    const saved = await persist();
+    if (!saved) return;
+    setTestingNodeId(selectedNode.id);
+    setNodeTestResult(null);
+    setNotice("Testing " + selectedNode.data.label + "…");
+    try {
+      const response = await fetch(
+        "/api/workflows/" + saved.id + "/nodes/" + selectedNode.id + "/test",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ input, steps: {} }),
+        },
+      );
+      const result = (await response.json()) as NodeTestResult;
+      setNodeTestResult(result);
+      setNotice(result.status === "success" ? "Node test passed" : "Node test failed");
+    } catch (error) {
+      setNodeTestResult({
+        nodeId: selectedNode.id,
+        label: selectedNode.data.label,
+        kind: selectedNode.data.kind,
+        status: "failed",
+        input,
+        error: error instanceof Error ? error.message : "Node test failed",
+        durationMs: 0,
+      });
+      setNotice("Node test failed");
+    } finally {
+      setTestingNodeId(null);
+    }
+  };
+
   const toggleEnabled = async () => {
     if (!active) return;
     await persist(!active.enabled);
   };
 
-  const addNode = (item: (typeof palette)[number]) => {
+  const addNode = (
+    item: (typeof palette)[number],
+    requestedCenter?: { x: number; y: number },
+  ) => {
+    recordHistory();
     const id = createNodeId(item.kind);
     const bounds = canvasRef.current?.getBoundingClientRect();
     const center =
-      flowInstance && bounds
+      requestedCenter ??
+      (flowInstance && bounds
         ? flowInstance.screenToFlowPosition({
             x: bounds.left + bounds.width / 2,
             y: bounds.top + bounds.height / 2,
           })
-        : { x: 400, y: 200 };
-    const position = findOpenNodePosition(center, nodes);
+        : { x: 400, y: 200 });
+    const positionBounds =
+      flowInstance && bounds
+        ? (() => {
+            const topLeft = flowInstance.screenToFlowPosition({
+              x: bounds.left + 18,
+              y: bounds.top + 18,
+            });
+            const bottomRight = flowInstance.screenToFlowPosition({
+              x: bounds.right - 18,
+              y: bounds.bottom - 18,
+            });
+            return {
+              left: topLeft.x,
+              top: topLeft.y,
+              right: bottomRight.x - NODE_WIDTH,
+              bottom: bottomRight.y - NODE_HEIGHT,
+            };
+          })()
+        : undefined;
+    const position = findOpenNodePosition(center, nodes, positionBounds);
 
     const node: N9nFlowNode = {
       id,
@@ -442,6 +737,7 @@ export function WorkflowStudio() {
     setDirty(true);
     setNotice("Added " + item.title);
 
+    if (requestedCenter) return;
     requestAnimationFrame(() => {
       flowInstance?.setCenter(
         position.x + NODE_WIDTH / 2,
@@ -454,14 +750,86 @@ export function WorkflowStudio() {
     });
   };
 
+  const handleCanvasDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDragActive(false);
+    const bounds = canvasRef.current?.getBoundingClientRect();
+    if (!flowInstance || !bounds) return;
+    const kind = event.dataTransfer.getData(DRAG_MIME) as NodeKind;
+    const item = palette.find((candidate) => candidate.kind === kind);
+    if (!item) return;
+    const zoom = flowInstance.getZoom();
+    const horizontalMargin = (NODE_WIDTH * zoom) / 2 + 20;
+    const verticalMargin = (NODE_HEIGHT * zoom) / 2 + 20;
+    const clientX = Math.max(
+      bounds.left + horizontalMargin,
+      Math.min(event.clientX, bounds.right - horizontalMargin),
+    );
+    const clientY = Math.max(
+      bounds.top + verticalMargin,
+      Math.min(event.clientY, bounds.bottom - verticalMargin),
+    );
+    addNode(
+      item,
+      flowInstance.screenToFlowPosition({
+        x: clientX,
+        y: clientY,
+      }),
+    );
+  };
+
+  const connectionAllowed = useCallback(
+    (connection: Connection | Edge) => {
+      const { source, target } = connection;
+      if (!source || !target || source === target) return false;
+      const targetNode = nodes.find((node) => node.id === target);
+      if (!targetNode || targetNode.data.kind.startsWith("trigger.")) {
+        return false;
+      }
+      if (
+        edges.some(
+          (edge) =>
+            edge.source === source &&
+            edge.target === target &&
+            edge.sourceHandle === connection.sourceHandle,
+        ) ||
+        edges.some((edge) => edge.target === target)
+      ) {
+        return false;
+      }
+      return !wouldCreateCycle(source, target, edges);
+    },
+    [edges, nodes],
+  );
+
   const connect = useCallback(
     (connection: Connection) => {
+      connectingRef.current = false;
+      if (!connectionAllowed(connection)) {
+        setNotice("That connection is not allowed");
+        return;
+      }
+      recordHistory();
+      const edgeId = [
+        connection.source,
+        connection.sourceHandle ?? "output",
+        connection.target,
+      ].join("-");
       setEdges((items) =>
-        addEdge({ ...connection, type: "smoothstep" }, items),
+        addEdge(
+          {
+            ...connection,
+            id: edgeId,
+            type: "smoothstep",
+            markerEnd: { type: MarkerType.ArrowClosed },
+          },
+          items,
+        ),
       );
       setDirty(true);
+      setNotice("Connected nodes");
     },
-    [setEdges],
+    [connectionAllowed, recordHistory, setEdges],
   );
 
   const handleNodesChange = useCallback(
@@ -482,6 +850,7 @@ export function WorkflowStudio() {
 
   const updateNode = (patch: Partial<N9nFlowNode["data"]>) => {
     if (!selectedId) return;
+    recordHistory();
     setNodes((items) =>
       items.map((node) =>
         node.id === selectedId
@@ -489,6 +858,7 @@ export function WorkflowStudio() {
           : node,
       ),
     );
+    setNodeTestResult(null);
     setDirty(true);
   };
 
@@ -501,6 +871,7 @@ export function WorkflowStudio() {
 
   const removeSelected = () => {
     if (!selectedId) return;
+    recordHistory();
     setNodes((items) => items.filter((node) => node.id !== selectedId));
     setEdges((items) =>
       items.filter(
@@ -508,7 +879,25 @@ export function WorkflowStudio() {
       ),
     );
     setSelectedId(null);
+    setNodeTestResult(null);
     setDirty(true);
+    setNotice("Removed node");
+  };
+
+  const selectValidationIssue = (issue: ValidationIssue) => {
+    if (!issue.nodeId) return;
+    const node = nodes.find((item) => item.id === issue.nodeId);
+    if (!node) return;
+    setSelectedId(node.id);
+    setNodes((items) =>
+      items.map((item) => ({ ...item, selected: item.id === node.id })),
+    );
+    flowInstance?.setCenter(
+      node.position.x + NODE_WIDTH / 2,
+      node.position.y + NODE_HEIGHT / 2,
+      { zoom: Math.min(flowInstance.getZoom(), 1.1), duration: 200 },
+    );
+    setValidationOpen(false);
   };
 
   return (
@@ -611,6 +1000,41 @@ export function WorkflowStudio() {
               </div>
 
               <div className="header-actions">
+                <button
+                  className="icon-button"
+                  onClick={undo}
+                  disabled={!canUndo}
+                  aria-label="Undo"
+                  title="Undo (Ctrl/Cmd+Z)"
+                >
+                  <Undo2 size={15} />
+                </button>
+                <button
+                  className="icon-button"
+                  onClick={redo}
+                  disabled={!canRedo}
+                  aria-label="Redo"
+                  title="Redo (Ctrl/Cmd+Shift+Z)"
+                >
+                  <Redo2 size={15} />
+                </button>
+                <button
+                  className={
+                    "validation-button " +
+                    (validationIssues.length > 0 ? "has-issues" : "is-valid")
+                  }
+                  onClick={() => setValidationOpen((open) => !open)}
+                  aria-label="Workflow validation"
+                >
+                  {validationIssues.length > 0 ? (
+                    <AlertTriangle size={14} />
+                  ) : (
+                    <Check size={14} />
+                  )}
+                  {validationIssues.length > 0
+                    ? validationIssues.length + " issues"
+                    : "Valid"}
+                </button>
                 <span className="save-state">
                   {dirty ? "Unsaved" : notice}
                 </span>
@@ -650,21 +1074,62 @@ export function WorkflowStudio() {
             <div className="studio">
               <NodePalette onAdd={addNode} />
 
-              <div className="canvas" ref={canvasRef}>
+              <div
+                className={"canvas " + (dragActive ? "is-drag-target" : "")}
+                ref={canvasRef}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  setDragActive(true);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "copy";
+                }}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                    setDragActive(false);
+                  }
+                }}
+                onDrop={handleCanvasDrop}
+              >
                 <ReactFlow
-                  nodes={nodes}
+                  nodes={renderNodes}
                   edges={edges}
                   nodeTypes={nodeTypes}
                   onNodesChange={handleNodesChange}
                   onEdgesChange={handleEdgesChange}
                   onConnect={connect}
+                  isValidConnection={connectionAllowed}
+                  onConnectStart={() => {
+                    connectingRef.current = true;
+                    setNotice("Choose a node input");
+                  }}
+                  onConnectEnd={() => {
+                    if (connectingRef.current) setNotice("Connection cancelled");
+                    connectingRef.current = false;
+                  }}
                   onInit={setFlowInstance}
-                  onNodeClick={(_, node) => setSelectedId(node.id)}
-                  onPaneClick={() => setSelectedId(null)}
+                  onNodeDragStart={recordHistory}
+                  onNodeClick={(_, node) => {
+                    setSelectedId(node.id);
+                    if (nodeTestResult?.nodeId !== node.id) {
+                      setNodeTestResult(null);
+                    }
+                  }}
+                  onEdgeClick={() => setSelectedId(null)}
+                  onPaneClick={() => {
+                    setSelectedId(null);
+                    setValidationOpen(false);
+                  }}
                   fitView
                   minZoom={0.35}
                   maxZoom={1.7}
-                  defaultEdgeOptions={{ type: "smoothstep" }}
+                  connectionMode={ConnectionMode.Strict}
+                  connectionRadius={28}
+                  defaultEdgeOptions={{
+                    type: "smoothstep",
+                    markerEnd: { type: MarkerType.ArrowClosed },
+                  }}
                   proOptions={{ hideAttribution: true }}
                   deleteKeyCode={null}
                 >
@@ -677,6 +1142,14 @@ export function WorkflowStudio() {
                   <Controls showInteractive={false} />
                 </ReactFlow>
 
+                {validationOpen && (
+                  <ValidationPanel
+                    issues={validationIssues}
+                    onSelect={selectValidationIssue}
+                    onClose={() => setValidationOpen(false)}
+                  />
+                )}
+
                 {runResult && (
                   <RunPanel
                     run={runResult}
@@ -688,9 +1161,16 @@ export function WorkflowStudio() {
               <Inspector
                 node={selectedNode}
                 workflow={active}
+                nodes={nodes}
+                edges={edges}
                 onLabel={(value) => updateNode({ label: value })}
                 onConfig={updateConfig}
                 onRemove={removeSelected}
+                testInput={nodeTestInput}
+                onTestInput={setNodeTestInput}
+                testResult={nodeTestResult}
+                testing={testingNodeId === selectedNode?.id}
+                onTest={() => void testSelectedNode()}
               />
             </div>
           </>
@@ -718,7 +1198,7 @@ function NodePalette({
     <aside className="palette">
       <div className="panel-title">
         <span>Nodes</span>
-        <small>click to add</small>
+        <small>drag or click</small>
       </div>
       {groups.map((group) => (
         <div className="palette__group" key={group}>
@@ -728,7 +1208,17 @@ function NodePalette({
             .map((item) => {
               const Icon = item.icon;
               return (
-                <button key={item.kind} onClick={() => onAdd(item)}>
+                <button
+                  key={item.kind}
+                  draggable
+                  data-node-kind={item.kind}
+                  onClick={() => onAdd(item)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "copy";
+                    event.dataTransfer.setData(DRAG_MIME, item.kind);
+                    event.dataTransfer.setData("text/plain", item.kind);
+                  }}
+                >
                   <Icon size={16} />
                   {item.title}
                   <Plus size={13} />
@@ -746,19 +1236,84 @@ function NodePalette({
   );
 }
 
+function ValidationPanel({
+  issues,
+  onSelect,
+  onClose,
+}: {
+  issues: ValidationIssue[];
+  onSelect: (issue: ValidationIssue) => void;
+  onClose: () => void;
+}) {
+  return (
+    <section className="validation-panel" aria-label="Validation issues">
+      <header>
+        <div>
+          <AlertTriangle size={15} />
+          <strong>Workflow validation</strong>
+        </div>
+        <button onClick={onClose} aria-label="Close validation">
+          <X size={15} />
+        </button>
+      </header>
+      {issues.length === 0 ? (
+        <div className="validation-panel__valid">
+          <Check size={16} /> Ready to run
+        </div>
+      ) : (
+        <div className="validation-panel__list">
+          {issues.map((issue) => (
+            <button
+              key={issue.id}
+              onClick={() => onSelect(issue)}
+              disabled={!issue.nodeId}
+            >
+              <AlertTriangle size={13} />
+              <span>{issue.message}</span>
+              {issue.nodeId && <ChevronRight size={13} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Inspector({
   node,
   workflow,
+  nodes,
+  edges,
   onLabel,
   onConfig,
   onRemove,
+  testInput,
+  onTestInput,
+  testResult,
+  testing,
+  onTest,
 }: {
   node: N9nFlowNode | null;
   workflow: Workflow;
+  nodes: N9nFlowNode[];
+  edges: Edge[];
   onLabel: (value: string) => void;
   onConfig: (key: string, value: unknown) => void;
   onRemove: () => void;
+  testInput: string;
+  onTestInput: (value: string) => void;
+  testResult: NodeTestResult | null;
+  testing: boolean;
+  onTest: () => void;
 }) {
+  const availableFields = node ? (templateFields[node.data.kind] ?? []) : [];
+  const [expressionTarget, setExpressionTarget] = useState("");
+  const activeExpressionTarget = availableFields.some(
+    (field) => field.key === expressionTarget,
+  )
+    ? expressionTarget
+    : (availableFields[0]?.key ?? "");
+
   if (!node) {
     return (
       <aside className="inspector inspector--empty">
@@ -776,6 +1331,41 @@ function Inspector({
   const textarea = (key: string) => (
     event: ChangeEvent<HTMLTextAreaElement>,
   ) => onConfig(key, event.target.value);
+  const upstreamIds = new Set<string>();
+  const queue = [node.id];
+  while (queue.length) {
+    const current = queue.shift()!;
+    for (const edge of edges.filter((item) => item.target === current)) {
+      if (upstreamIds.has(edge.source)) continue;
+      upstreamIds.add(edge.source);
+      queue.push(edge.source);
+    }
+  }
+  const expressions = [
+    { label: "Input body", value: "{{input.body}}" },
+    ...nodes
+      .filter((item) => upstreamIds.has(item.id))
+      .flatMap((item) => [
+        {
+          label: item.data.label + " output",
+          value: "{{steps." + item.id + "}}",
+        },
+        ...(item.data.kind === "action.http"
+          ? [
+              {
+                label: item.data.label + " body",
+                value: "{{steps." + item.id + ".body}}",
+              },
+            ]
+          : []),
+      ]),
+  ];
+  const insertExpression = (expression: string) => {
+    if (!activeExpressionTarget) return;
+    const current = text(activeExpressionTarget);
+    const separator = current && !/\s$/.test(current) ? " " : "";
+    onConfig(activeExpressionTarget, current + separator + expression);
+  };
 
   return (
     <aside className="inspector">
@@ -801,12 +1391,14 @@ function Inspector({
               rows={10}
               value={text("prompt")}
               onChange={textarea("prompt")}
+              onFocus={() => setExpressionTarget("prompt")}
             />
           </Field>
           <Field label="Workspace">
             <input
               value={text("cwd") || "/workspace"}
               onChange={input("cwd")}
+              onFocus={() => setExpressionTarget("cwd")}
             />
           </Field>
         </>
@@ -822,27 +1414,50 @@ function Inspector({
             </select>
           </Field>
           <Field label="URL">
-            <input value={text("url")} onChange={input("url")} />
+            <input
+              value={text("url")}
+              onChange={input("url")}
+              onFocus={() => setExpressionTarget("url")}
+            />
           </Field>
           <Field label="Headers" hint="JSON object">
-            <textarea rows={4} value={text("headers")} onChange={textarea("headers")} />
+            <textarea
+              rows={4}
+              value={text("headers")}
+              onChange={textarea("headers")}
+              onFocus={() => setExpressionTarget("headers")}
+            />
           </Field>
           <Field label="Body">
-            <textarea rows={7} value={text("body")} onChange={textarea("body")} />
+            <textarea
+              rows={7}
+              value={text("body")}
+              onChange={textarea("body")}
+              onFocus={() => setExpressionTarget("body")}
+            />
           </Field>
         </>
       )}
 
       {node.data.kind === "data.compose" && (
         <Field label="Value" hint="Plain text or JSON; templates are resolved first.">
-          <textarea rows={12} value={text("value")} onChange={textarea("value")} />
+          <textarea
+            rows={12}
+            value={text("value")}
+            onChange={textarea("value")}
+            onFocus={() => setExpressionTarget("value")}
+          />
         </Field>
       )}
 
       {node.data.kind === "logic.condition" && (
         <>
           <Field label="Left value">
-            <input value={text("left")} onChange={input("left")} />
+            <input
+              value={text("left")}
+              onChange={input("left")}
+              onFocus={() => setExpressionTarget("left")}
+            />
           </Field>
           <Field label="Operation">
             <select
@@ -856,7 +1471,11 @@ function Inspector({
             </select>
           </Field>
           <Field label="Right value">
-            <input value={text("right")} onChange={input("right")} />
+            <input
+              value={text("right")}
+              onChange={input("right")}
+              onFocus={() => setExpressionTarget("right")}
+            />
           </Field>
         </>
       )}
@@ -887,6 +1506,79 @@ function Inspector({
           </div>
         </div>
       )}
+
+      {availableFields.length > 0 && (
+        <section className="expression-picker">
+          <header>
+            <Braces size={14} />
+            <strong>Insert expression</strong>
+          </header>
+          <select
+            aria-label="Expression target"
+            value={activeExpressionTarget}
+            onChange={(event) => setExpressionTarget(event.target.value)}
+          >
+            {availableFields.map((field) => (
+              <option key={field.key} value={field.key}>
+                {field.label}
+              </option>
+            ))}
+          </select>
+          <div>
+            {expressions.map((expression) => (
+              <button
+                key={expression.label + expression.value}
+                onClick={() => insertExpression(expression.value)}
+                title={expression.value}
+              >
+                <Plus size={11} /> {expression.label}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="node-test">
+        <header>
+          <div>
+            <FlaskConical size={14} />
+            <strong>Test this node</strong>
+          </div>
+          <button
+            className="button button--quiet"
+            onClick={onTest}
+            disabled={testing}
+          >
+            {testing ? <Activity className="spin" size={13} /> : <Play size={13} />}
+            {testing ? "Testing" : "Test node"}
+          </button>
+        </header>
+        <label>
+          <span>Input JSON</span>
+          <textarea
+            aria-label="Test input JSON"
+            rows={5}
+            value={testInput}
+            onChange={(event) => onTestInput(event.target.value)}
+          />
+        </label>
+        {testResult?.nodeId === node.id && (
+          <div className={"node-test__result node-test__result--" + testResult.status}>
+            <span>
+              {testResult.status} · {testResult.durationMs}ms
+            </span>
+            <pre>
+              {JSON.stringify(
+                testResult.error
+                  ? { error: testResult.error }
+                  : testResult.output,
+                null,
+                2,
+              )}
+            </pre>
+          </div>
+        )}
+      </section>
 
       <button className="danger-link" onClick={onRemove}>
         Remove node

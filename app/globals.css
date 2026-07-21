@@ -316,6 +316,53 @@ select:focus-visible {
   gap: 8px;
 }
 
+.icon-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.icon-button:hover:not(:disabled) {
+  border-color: var(--line-bright);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.icon-button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.validation-button {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.validation-button.has-issues {
+  border-color: rgba(255, 173, 102, 0.32);
+  color: var(--orange);
+}
+
+.validation-button.is-valid {
+  color: var(--lime);
+}
+
 .save-state {
   margin-right: 4px;
   color: var(--muted-2);
@@ -465,6 +512,14 @@ select:focus-visible {
   text-align: left;
 }
 
+.palette__group button[draggable="true"] {
+  cursor: grab;
+}
+
+.palette__group button[draggable="true"]:active {
+  cursor: grabbing;
+}
+
 .palette__group button:hover {
   border-color: var(--line);
   background: var(--panel-2);
@@ -508,6 +563,29 @@ pre {
   background: #111216;
 }
 
+.canvas::after {
+  position: absolute;
+  z-index: 15;
+  inset: 12px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+  transition: 120ms ease;
+  content: "Drop node here";
+}
+
+.canvas.is-drag-target::after {
+  border-color: color-mix(in srgb, var(--lime) 60%, transparent);
+  background: rgba(181, 244, 69, 0.04);
+  color: var(--lime);
+}
+
 .react-flow__controls {
   overflow: hidden;
   border: 1px solid var(--line) !important;
@@ -528,6 +606,15 @@ pre {
 .react-flow__edge-path {
   stroke: #5d626d;
   stroke-width: 1.5;
+}
+
+.react-flow__edge-interaction {
+  stroke-width: 24;
+}
+
+.react-flow__connection-path {
+  stroke: var(--lime);
+  stroke-width: 2;
 }
 
 .react-flow__edge.selected .react-flow__edge-path {
@@ -562,6 +649,13 @@ pre {
 .flow-node:hover,
 .flow-node.is-selected {
   border-color: color-mix(in srgb, var(--node-color) 65%, #373a42);
+}
+
+.react-flow__node.has-validation-error .flow-node {
+  border-color: color-mix(in srgb, var(--orange) 70%, #373a42);
+  box-shadow:
+    0 0 0 1px rgba(255, 173, 102, 0.16),
+    0 8px 28px rgba(0, 0, 0, 0.24);
 }
 
 .flow-node.is-selected {
@@ -778,6 +872,227 @@ pre {
 
 .danger-link:hover {
   color: var(--red);
+}
+
+.validation-panel {
+  position: absolute;
+  z-index: 21;
+  top: 14px;
+  right: 14px;
+  width: min(340px, calc(100% - 28px));
+  overflow: hidden;
+  border: 1px solid var(--line-bright);
+  border-radius: 10px;
+  background: #181a1f;
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.4);
+}
+
+.validation-panel > header {
+  display: flex;
+  height: 43px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 11px;
+  border-bottom: 1px solid var(--line);
+}
+
+.validation-panel > header div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--orange);
+}
+
+.validation-panel > header strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.validation-panel > header button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.validation-panel__list {
+  display: grid;
+  max-height: 260px;
+  padding: 7px;
+  overflow: auto;
+}
+
+.validation-panel__list button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 6px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--orange);
+  cursor: pointer;
+  text-align: left;
+}
+
+.validation-panel__list button:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+.validation-panel__list button:disabled {
+  cursor: default;
+}
+
+.validation-panel__list button span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.validation-panel__valid {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 16px;
+  color: var(--lime);
+  font-size: 11px;
+}
+
+.expression-picker,
+.node-test {
+  margin-top: 18px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #131419;
+}
+
+.expression-picker > header,
+.node-test > header,
+.node-test > header > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.expression-picker > header,
+.node-test > header {
+  justify-content: space-between;
+  margin-bottom: 9px;
+  color: var(--purple);
+}
+
+.expression-picker strong,
+.node-test strong {
+  color: var(--text);
+  font-size: 10px;
+}
+
+.expression-picker > select {
+  width: 100%;
+  height: 32px;
+  margin-bottom: 8px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #101115;
+  color: var(--text);
+  font-size: 10px;
+}
+
+.expression-picker > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.expression-picker > div button {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.expression-picker > div button:hover {
+  border-color: var(--purple);
+  color: var(--text);
+}
+
+.node-test > header .button {
+  height: 29px;
+  padding: 0 8px;
+  font-size: 9px;
+}
+
+.node-test > label {
+  display: grid;
+  gap: 5px;
+}
+
+.node-test > label > span,
+.node-test__result > span {
+  color: var(--muted-2);
+  font-size: 9px;
+}
+
+.node-test textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #101115;
+  color: var(--text);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.node-test__result {
+  margin-top: 9px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.node-test__result > span {
+  display: block;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line);
+  text-transform: uppercase;
+}
+
+.node-test__result--success > span {
+  color: var(--lime);
+}
+
+.node-test__result--failed > span {
+  color: var(--red);
+}
+
+.node-test__result pre {
+  max-height: 190px;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  color: #c5cad3;
+  font-size: 9px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .run-panel {

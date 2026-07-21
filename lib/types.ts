@@ -71,6 +71,17 @@ export interface WorkflowRun {
   finishedAt?: string;
 }
 
+export interface NodeTestResult {
+  nodeId: string;
+  label: string;
+  kind: NodeKind;
+  status: "success" | "failed";
+  input: unknown;
+  output?: unknown;
+  error?: string;
+  durationMs: number;
+}
+
 export const EMPTY_GRAPH: WorkflowGraph = {
   nodes: [
     {

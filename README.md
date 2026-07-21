@@ -5,14 +5,29 @@ A small, local-first workflow engine for one Raspberry Pi and one owner.
 No cloud account. No telemetry. No enterprise edition. No API-key requirement
 for Codex: 9n9 calls the private, already-authenticated `codex-agent` bridge.
 
-## First slice
+## Current features
 
 - Visual flow editor
+- Drag/drop node placement with collision and viewport protection
+- Reliable one-input connections with cycle and duplicate protection
+- Keyboard deletion plus undo/redo
+- Live workflow validation before execution
+- Per-node testing with editable JSON input and visible output
+- Expression picker for input and upstream step values
 - Manual, webhook, and cron triggers
 - Local Codex, HTTP, compose, and condition nodes
 - SQLite workflow storage and run history
 - Docker image for arm64 and amd64
 - Template values such as `{{input.body}}` and `{{steps.nodeId.body}}`
+
+## Editor controls
+
+- Drag a palette item to place it exactly, or click it to add near the center.
+- Drag from a node's right handle to the next node's left handle.
+- Select a node or connection and press `Delete` or `Backspace`.
+- Use `Ctrl/Cmd+Z` to undo and `Ctrl/Cmd+Shift+Z` to redo.
+- Open the validation badge in the header to jump to broken nodes.
+- Select a node to insert expressions or run it alone with test JSON.
 
 ## Local development
 
