@@ -48,6 +48,8 @@ import type {
   NodeConfig,
   NodeKind,
   Workflow,
+  WorkflowEdge,
+  WorkflowNode,
   WorkflowRun,
 } from "@/lib/types";
 
@@ -65,6 +67,24 @@ function changesWorkflowNodes(changes: NodeChange<N9nFlowNode>[]) {
 
 function changesWorkflowEdges(changes: EdgeChange<Edge>[]) {
   return changes.some((change) => change.type !== "select");
+}
+
+function serializeNodes(nodes: N9nFlowNode[]): WorkflowNode[] {
+  return nodes.map((node) => ({
+    id: node.id,
+    type: "n9n",
+    position: node.position,
+    data: node.data,
+  }));
+}
+
+function serializeEdges(edges: Edge[]): WorkflowEdge[] {
+  return edges.map((edge) => ({
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    sourceHandle: edge.sourceHandle,
+  }));
 }
 
 type ServiceStatus = {
@@ -264,7 +284,10 @@ export function WorkflowStudio() {
             body: JSON.stringify({
               name: active.name,
               enabled: enabledOverride ?? active.enabled,
-              graph: { nodes, edges },
+              graph: {
+                nodes: serializeNodes(nodes),
+                edges: serializeEdges(edges),
+              },
             }),
           },
         );
