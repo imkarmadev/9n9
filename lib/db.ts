@@ -52,8 +52,17 @@ function createDatabase() {
   return instance;
 }
 
-export const db = globalDatabase.__n9nDatabase ?? createDatabase();
-
-if (process.env.NODE_ENV !== "production") {
-  globalDatabase.__n9nDatabase = db;
+function getDatabase() {
+  if (!globalDatabase.__n9nDatabase) {
+    globalDatabase.__n9nDatabase = createDatabase();
+  }
+  return globalDatabase.__n9nDatabase;
 }
+
+export const db = new Proxy({} as Database.Database, {
+  get(_target, property) {
+    const instance = getDatabase();
+    const value = Reflect.get(instance, property);
+    return typeof value === "function" ? value.bind(instance) : value;
+  },
+});

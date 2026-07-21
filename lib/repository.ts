@@ -98,11 +98,6 @@ function uniqueSlug(name: string, ignoreId?: string) {
 }
 
 export function ensureStarterWorkflow() {
-  const count = db.prepare("SELECT COUNT(*) AS count FROM workflows").get() as {
-    count: number;
-  };
-  if (count.count > 0) return;
-
   const now = new Date().toISOString();
   const graph: WorkflowGraph = {
     nodes: [
@@ -125,9 +120,10 @@ export function ensureStarterWorkflow() {
   };
 
   db.prepare(
-    `INSERT INTO workflows
+    `INSERT OR IGNORE INTO workflows
       (id, name, slug, enabled, graph, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)` ,
+     SELECT ?, ?, ?, ?, ?, ?, ?
+     WHERE NOT EXISTS (SELECT 1 FROM workflows)`,
   ).run(
     randomUUID(),
     "Local Codex check",
@@ -139,9 +135,8 @@ export function ensureStarterWorkflow() {
   );
 }
 
-ensureStarterWorkflow();
-
 export function listWorkflows(): Workflow[] {
+  ensureStarterWorkflow();
   return (
     db
       .prepare("SELECT * FROM workflows ORDER BY updated_at DESC")
