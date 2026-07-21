@@ -20,11 +20,35 @@ Requires Node.js 22 or newer.
 
 ```bash
 cp .env.example .env
-npm install
+npm ci
+npx playwright install chromium
 npm run dev
 ```
 
 Open <http://localhost:3000>.
+
+## Development flow
+
+Run the full gate before merging or deploying:
+
+```bash
+npm run check
+```
+
+That runs ESLint, a production Next.js build, and the Playwright browser suite.
+The browser tests use an isolated temporary SQLite database and cover adding and
+configuring nodes, saving a durable graph, running a flow, webhooks, and run
+history. Failure screenshots, traces, and videos are written to `test-results/`.
+
+For faster browser-test iteration:
+
+```bash
+npm run test:e2e
+npm run test:e2e:ui
+```
+
+GitHub Actions runs the same gate for every push to `main` and every pull
+request.
 
 ## Raspberry Pi
 
@@ -36,6 +60,17 @@ docker compose up -d --build
 ```
 
 Open `http://YOUR_PI_IP:9999`.
+
+From a development machine on the same LAN, deploy only after all checks pass:
+
+```bash
+npm run deploy:pi
+```
+
+The deploy command runs the full quality gate, mirrors the verified source to
+`imkarma@192.168.1.95:/opt/9n9`, rebuilds the Docker service, and waits for its
+health endpoint. Override `N9N_PI_TARGET`, `N9N_PI_PATH`, or `N9N_PI_URL` when
+deploying somewhere else.
 
 Before removing n8n permanently, give the Codex bridge a durable network:
 

@@ -55,6 +55,57 @@ import type {
 
 const nodeTypes = { n9n: FlowNode };
 
+const NODE_WIDTH = 246;
+const NODE_HEIGHT = 92;
+const NODE_GAP = 40;
+
+function findOpenNodePosition(
+  center: { x: number; y: number },
+  nodes: N9nFlowNode[],
+) {
+  const origin = {
+    x: center.x - NODE_WIDTH / 2,
+    y: center.y - NODE_HEIGHT / 2,
+  };
+  const stepX = NODE_WIDTH + NODE_GAP;
+  const stepY = NODE_HEIGHT + NODE_GAP;
+  const offsets = [
+    [0, 0],
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+    [1, 1],
+    [-1, 1],
+    [1, -1],
+    [-1, -1],
+    [2, 0],
+    [-2, 0],
+  ];
+
+  for (const [column, row] of offsets) {
+    const candidate = {
+      x: origin.x + column * stepX,
+      y: origin.y + row * stepY,
+    };
+    const isOpen = nodes.every((node) => {
+      const existing = node.position;
+      return (
+        candidate.x + NODE_WIDTH + NODE_GAP <= existing.x ||
+        existing.x + NODE_WIDTH + NODE_GAP <= candidate.x ||
+        candidate.y + NODE_HEIGHT + NODE_GAP <= existing.y ||
+        existing.y + NODE_HEIGHT + NODE_GAP <= candidate.y
+      );
+    });
+    if (isOpen) return candidate;
+  }
+
+  return {
+    x: origin.x + stepX * (nodes.length + 1),
+    y: origin.y,
+  };
+}
+
 function changesWorkflowNodes(changes: NodeChange<N9nFlowNode>[]) {
   return changes.some(
     (change) =>
@@ -361,11 +412,7 @@ export function WorkflowStudio() {
             y: bounds.top + bounds.height / 2,
           })
         : { x: 400, y: 200 };
-    const offset = (nodes.length % 4) * 18;
-    const position = {
-      x: center.x - 108 + offset,
-      y: center.y - 34 + offset,
-    };
+    const position = findOpenNodePosition(center, nodes);
 
     const node: N9nFlowNode = {
       id,
@@ -377,16 +424,23 @@ export function WorkflowStudio() {
         config: { ...item.config },
       },
     };
-    setNodes((items) => [...items, node]);
+    setNodes((items) => [
+      ...items.map((existing) => ({ ...existing, selected: false })),
+      { ...node, selected: true },
+    ]);
     setSelectedId(id);
     setDirty(true);
     setNotice("Added " + item.title);
 
     requestAnimationFrame(() => {
-      flowInstance?.setCenter(position.x + 108, position.y + 34, {
-        zoom: Math.min(flowInstance.getZoom(), 1.1),
-        duration: 250,
-      });
+      flowInstance?.setCenter(
+        position.x + NODE_WIDTH / 2,
+        position.y + NODE_HEIGHT / 2,
+        {
+          zoom: Math.min(flowInstance.getZoom(), 1.1),
+          duration: 250,
+        },
+      );
     });
   };
 
