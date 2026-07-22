@@ -28,7 +28,7 @@ cloud-account requirement, or telemetry. This file is the durable product plan.
 - Prevent expressions and workflow output from reading stored secrets.
 - Audit events for authentication, credentials, webhook tokens, and security changes.
 
-## v0.4 — Workflow management
+## v0.4 — Workflow management (complete)
 
 - Delete, duplicate, archive, and restore workflows.
 - Export/import workflow JSON and reusable templates.

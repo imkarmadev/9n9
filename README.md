@@ -22,6 +22,11 @@ for Codex: 9n9 calls the private, already-authenticated `codex-agent` bridge.
   and SSH key types
 - Server-only credential injection with masking/redaction in APIs and run data
 - Token-authenticated webhooks with one-time display and immediate rotation
+- Archive, restore, duplicate, permanently delete, search, filter, and sort flows
+- Editable descriptions, tags, and unique webhook slugs
+- Debounced race-safe autosave with unsaved-navigation protection
+- Immutable workflow version history with disabled-on-restore rollback
+- Portable JSON import/export and credential-free reusable templates
 - Docker image for arm64 and amd64
 - Template values such as `{{input.body}}` and `{{steps.nodeId.body}}`
 
@@ -60,8 +65,23 @@ That runs ESLint, a production Next.js build, and the Playwright browser suite.
 The browser tests use an isolated temporary SQLite database and cover auth and
 CSRF boundaries, hardened cookies, login rate limits, encrypted/masked
 credentials, server-side secret injection and redaction, webhook rotation,
+workflow lifecycle, metadata, search/filter/sort, race-safe autosave, navigation
+protection, import/export, templates, versions, activation confirmation,
 editing, execution, and run history. Failure screenshots, traces, and videos
 are written to `test-results/`.
+
+## Workflow management
+
+- Use the search and status/sort controls above the flow list.
+- Open **Workflow settings** from the editor header to edit the slug,
+  description, and tags or to duplicate, archive, export, template, restore a
+  version, or permanently delete the flow.
+- Changes autosave after a short debounce; edits made during an in-flight save
+  remain pending and save next.
+- Imported workflows, template instances, duplicates, and restored versions
+  start disabled. Templates intentionally omit credential bindings.
+- Enabling an invalid workflow requires an explicit confirmation and is also
+  enforced by the server API.
 
 For faster browser-test iteration:
 

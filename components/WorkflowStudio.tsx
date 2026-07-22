@@ -20,16 +20,19 @@ import {
 import {
   Activity,
   AlertTriangle,
+  Archive,
   Braces,
   Check,
   ChevronRight,
   Clock3,
   Code2,
   Copy,
+  Download,
   GitBranch,
   Globe2,
   History,
   KeyRound,
+  LayoutTemplate,
   LogOut,
   FlaskConical,
   MousePointerClick,
@@ -37,9 +40,11 @@ import {
   Plus,
   Redo2,
   Save,
+  Search,
   Settings2,
   ShieldCheck,
   UserRound,
+  Upload,
   Undo2,
   Webhook,
   X,
@@ -65,6 +70,8 @@ import type {
   WorkflowEdge,
   WorkflowNode,
   WorkflowRun,
+  WorkflowTemplate,
+  WorkflowVersion,
 } from "@/lib/types";
 import {
   validateWorkflowGraph,
@@ -347,8 +354,10 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
   const [nodes, setNodes, onNodesChange] = useNodesState<N9nFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<"flow" | "runs" | "credentials" | "audit" | "account">("flow");
+  const [view, setView] = useState<"flow" | "runs" | "templates" | "credentials" | "audit" | "account">("flow");
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
+  const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
+  const [versions, setVersions] = useState<WorkflowVersion[]>([]);
   const [credentials, setCredentials] = useState<CredentialSummary[]>([]);
   const [service, setService] = useState<ServiceStatus | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -365,6 +374,11 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
   const [nodeTestResult, setNodeTestResult] =
     useState<NodeTestResult | null>(null);
   const [notice, setNotice] = useState("Ready");
+  const [saveError, setSaveError] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [flowSearch, setFlowSearch] = useState("");
+  const [flowFilter, setFlowFilter] = useState<"active" | "archived" | "all">("active");
+  const [flowSort, setFlowSort] = useState<"updated" | "created" | "name">("updated");
   const [runResult, setRunResult] = useState<WorkflowRun | null>(null);
   const [flowInstance, setFlowInstance] =
     useState<ReactFlowInstance<N9nFlowNode, Edge> | null>(null);
@@ -373,6 +387,16 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
   const futureRef = useRef<GraphSnapshot[]>([]);
   const connectingRef = useRef(false);
   const hydratedWorkflowIdRef = useRef<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const editRevisionRef = useRef(0);
+  const failedRevisionRef = useRef(-1);
+  const savingRef = useRef(false);
+
+  const markDirty = useCallback(() => {
+    editRevisionRef.current += 1;
+    setDirty(true);
+    setSaveError("");
+  }, []);
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedId) ?? null,
@@ -405,22 +429,31 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
     [invalidNodeIds, nodes],
   );
   const { canUndo, canRedo } = historyAvailability;
+  const visibleWorkflows = useMemo(() => {
+    const query = flowSearch.trim().toLowerCase();
+    return workflows
+      .filter((workflow) => flowFilter === "all" || (flowFilter === "archived" ? Boolean(workflow.archivedAt) : !workflow.archivedAt))
+      .filter((workflow) => !query || workflow.name.toLowerCase().includes(query) || workflow.description.toLowerCase().includes(query) || workflow.tags.some((tag) => tag.includes(query)))
+      .sort((left, right) => flowSort === "name" ? left.name.localeCompare(right.name) : new Date(flowSort === "created" ? right.createdAt : right.updatedAt).getTime() - new Date(flowSort === "created" ? left.createdAt : left.updatedAt).getTime());
+  }, [flowFilter, flowSearch, flowSort, workflows]);
 
   const load = useCallback(async () => {
     try {
-      const [flowList, currentStatus, credentialList] = await Promise.all([
-        jsonRequest<Workflow[]>("/api/workflows", csrfToken),
+      const [flowList, currentStatus, credentialList, templateList] = await Promise.all([
+        jsonRequest<Workflow[]>("/api/workflows?archived=all", csrfToken),
         jsonRequest<ServiceStatus>("/api/status", csrfToken),
         jsonRequest<CredentialSummary[]>("/api/credentials", csrfToken),
+        jsonRequest<WorkflowTemplate[]>("/api/templates", csrfToken),
       ]);
       setWorkflows(flowList);
       setService(currentStatus);
       setCredentials(credentialList);
+      setTemplates(templateList);
       setActive((current) => {
         if (current) {
           return flowList.find((item) => item.id === current.id) ?? flowList[0];
         }
-        return flowList[0] ?? null;
+        return flowList.find((item) => !item.archivedAt) ?? flowList[0] ?? null;
       });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not load 9n9");
@@ -444,6 +477,8 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
     setEdges(active.graph.edges);
     setSelectedId(null);
     setDirty(false);
+    editRevisionRef.current = 0;
+    failedRevisionRef.current = -1;
     setRunResult(null);
     setNodeTestResult(null);
     pastRef.current = [];
@@ -480,13 +515,13 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
     setNodes(snapshot.nodes);
     setEdges(snapshot.edges);
     setSelectedId(null);
-    setDirty(true);
+    markDirty();
     setNotice("Undid graph change");
     setHistoryAvailability({
       canUndo: pastRef.current.length > 0,
       canRedo: true,
     });
-  }, [edges, nodes, setEdges, setNodes]);
+  }, [edges, markDirty, nodes, setEdges, setNodes]);
 
   const redo = useCallback(() => {
     const snapshot = futureRef.current[0];
@@ -499,13 +534,13 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
     setNodes(snapshot.nodes);
     setEdges(snapshot.edges);
     setSelectedId(null);
-    setDirty(true);
+    markDirty();
     setNotice("Redid graph change");
     setHistoryAvailability({
       canUndo: true,
       canRedo: futureRef.current.length > 0,
     });
-  }, [edges, nodes, setEdges, setNodes]);
+  }, [edges, markDirty, nodes, setEdges, setNodes]);
 
   useEffect(() => {
     const handleKeyboard = (event: KeyboardEvent) => {
@@ -553,18 +588,22 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
         ),
       );
       setSelectedId(null);
-      setDirty(true);
+      markDirty();
       setNotice("Deleted selection");
     };
 
     window.addEventListener("keydown", handleKeyboard);
     return () => window.removeEventListener("keydown", handleKeyboard);
-  }, [edges, nodes, recordHistory, redo, selectedId, setEdges, setNodes, undo]);
+  }, [edges, markDirty, nodes, recordHistory, redo, selectedId, setEdges, setNodes, undo]);
 
   const persist = useCallback(
-    async (enabledOverride?: boolean) => {
+    async (enabledOverride?: boolean, options: { forceEnableInvalid?: boolean; reason?: string } = {}) => {
       if (!active) return null;
+      if (savingRef.current) return null;
+      const revisionAtStart = editRevisionRef.current;
+      savingRef.current = true;
       setSaving(true);
+      setSaveError("");
       setNotice("Saving…");
       try {
         const saved = await jsonRequest<Workflow>(
@@ -574,7 +613,12 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
             method: "PUT",
             body: JSON.stringify({
               name: active.name,
+              slug: active.slug,
+              description: active.description,
+              tags: active.tags,
               enabled: enabledOverride ?? active.enabled,
+              forceEnableInvalid: options.forceEnableInvalid,
+              reason: options.reason ?? "saved",
               graph: {
                 nodes: serializeNodes(nodes),
                 edges: serializeEdges(edges),
@@ -582,24 +626,63 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
             }),
           },
         );
-        setActive(saved);
+        if (editRevisionRef.current === revisionAtStart) setActive(saved);
         setWorkflows((items) =>
           items.map((item) => (item.id === saved.id ? saved : item)),
         );
-        setDirty(false);
-        setNotice("Saved");
+        const hasNewerChanges = editRevisionRef.current !== revisionAtStart;
+        setDirty(hasNewerChanges);
+        setNotice(hasNewerChanges ? "Newer changes pending" : "Saved");
         return saved;
       } catch (error) {
-        setNotice(error instanceof Error ? error.message : "Save failed");
+        const message = error instanceof Error ? error.message : "Save failed";
+        failedRevisionRef.current = revisionAtStart;
+        setSaveError(message);
+        setNotice(message);
         return null;
       } finally {
+        savingRef.current = false;
         setSaving(false);
       }
     },
     [active, csrfToken, edges, nodes],
   );
 
+  useEffect(() => {
+    if (!dirty || saving || !active || active.archivedAt || failedRevisionRef.current === editRevisionRef.current) return;
+    const timer = window.setTimeout(() => {
+      void persist(undefined, { reason: "autosave" });
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [active, dirty, edges, nodes, persist, saving]);
+
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirty && !saving) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirty, saving]);
+
+  const allowNavigation = useCallback(() => {
+    return (!dirty && !saving) || window.confirm("This workflow still has unsaved changes. Leave it anyway?");
+  }, [dirty, saving]);
+
+  const changeView = (next: typeof view) => {
+    if (next !== view && view === "flow" && !allowNavigation()) return;
+    setView(next);
+  };
+
+  const selectWorkflow = (workflow: Workflow) => {
+    if (workflow.id !== active?.id && !allowNavigation()) return;
+    setActive(workflow);
+    setView("flow");
+  };
+
   const createFlow = async () => {
+    if (!allowNavigation()) return;
     try {
       const created = await jsonRequest<Workflow>("/api/workflows", csrfToken, {
         method: "POST",
@@ -610,6 +693,142 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
       setView("flow");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not create flow");
+    }
+  };
+
+  const openWorkflowSettings = async () => {
+    if (!active) return;
+    try {
+      setVersions(await jsonRequest<WorkflowVersion[]>(`/api/workflows/${active.id}/versions`, csrfToken));
+      setSettingsOpen(true);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not load versions");
+    }
+  };
+
+  const patchWorkflowMetadata = (patch: Partial<Pick<Workflow, "name" | "slug" | "description" | "tags">>) => {
+    if (!active) return;
+    setActive({ ...active, ...patch });
+    markDirty();
+  };
+
+  const workflowAction = async (action: "archive" | "restore" | "duplicate") => {
+    if (!active) return;
+    if (dirty && !(await persist())) return;
+    if (action === "archive" && !window.confirm(`Archive ${active.name}? Scheduled and webhook execution will stop.`)) return;
+    try {
+      const result = await jsonRequest<Workflow>(`/api/workflows/${active.id}/${action}`, csrfToken, { method: "POST", body: "{}" });
+      if (action === "duplicate") {
+        setWorkflows((items) => [result, ...items]);
+        hydratedWorkflowIdRef.current = null;
+        setActive(result);
+        setFlowFilter("active");
+      } else {
+        setWorkflows((items) => items.map((item) => item.id === result.id ? result : item));
+        setActive(result);
+        setFlowFilter(action === "archive" ? "archived" : "active");
+      }
+      setSettingsOpen(false);
+      setNotice(action === "archive" ? "Archived" : action === "restore" ? "Restored" : "Duplicated");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Workflow action failed");
+    }
+  };
+
+  const permanentlyDeleteWorkflow = async () => {
+    if (!active || !window.confirm(`Permanently delete ${active.name} and its run history? This cannot be undone.`)) return;
+    try {
+      await jsonRequest(`/api/workflows/${active.id}`, csrfToken, { method: "DELETE" });
+      const remaining = workflows.filter((item) => item.id !== active.id);
+      setWorkflows(remaining);
+      hydratedWorkflowIdRef.current = null;
+      setActive(remaining.find((item) => !item.archivedAt) ?? remaining[0] ?? null);
+      setSettingsOpen(false);
+      setDirty(false);
+      setNotice("Workflow deleted");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Delete failed");
+    }
+  };
+
+  const exportActiveWorkflow = async () => {
+    if (!active) return;
+    const response = await fetch(`/api/workflows/${active.id}/export`);
+    if (!response.ok) { setNotice("Export failed"); return; }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${active.slug}.9n9.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setNotice("Workflow exported");
+  };
+
+  const importWorkflowFile = async (file?: File) => {
+    if (!file || !allowNavigation()) return;
+    try {
+      const imported = await jsonRequest<Workflow>("/api/workflows/import", csrfToken, { method: "POST", body: await file.text() });
+      setWorkflows((items) => [imported, ...items]);
+      hydratedWorkflowIdRef.current = null;
+      setActive(imported);
+      setFlowFilter("active");
+      setView("flow");
+      setNotice("Workflow imported disabled");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Import failed");
+    } finally {
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
+
+  const saveActiveAsTemplate = async () => {
+    if (!active) return;
+    if (dirty && !(await persist())) return;
+    try {
+      const template = await jsonRequest<WorkflowTemplate>("/api/templates", csrfToken, { method: "POST", body: JSON.stringify({ workflowId: active.id }) });
+      setTemplates((items) => [...items, template].sort((a, b) => a.name.localeCompare(b.name)));
+      setNotice("Template saved without credential bindings");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Template save failed");
+    }
+  };
+
+  const instantiateWorkflowTemplate = async (template: WorkflowTemplate) => {
+    if (!allowNavigation()) return;
+    try {
+      const workflow = await jsonRequest<Workflow>(`/api/templates/${template.id}/instantiate`, csrfToken, { method: "POST", body: "{}" });
+      setWorkflows((items) => [workflow, ...items]);
+      hydratedWorkflowIdRef.current = null;
+      setActive(workflow);
+      setFlowFilter("active");
+      setView("flow");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not use template");
+    }
+  };
+
+  const removeWorkflowTemplate = async (template: WorkflowTemplate) => {
+    if (!window.confirm(`Delete template ${template.name}?`)) return;
+    try {
+      await jsonRequest(`/api/templates/${template.id}`, csrfToken, { method: "DELETE" });
+      setTemplates((items) => items.filter((item) => item.id !== template.id));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not delete template");
+    }
+  };
+
+  const restoreVersion = async (version: WorkflowVersion) => {
+    if (!active || !window.confirm(`Restore version ${version.version}? The restored workflow will be disabled.`)) return;
+    try {
+      const restored = await jsonRequest<Workflow>(`/api/workflows/${active.id}/versions/${version.version}/restore`, csrfToken, { method: "POST", body: "{}" });
+      hydratedWorkflowIdRef.current = null;
+      setActive(restored);
+      setWorkflows((items) => items.map((item) => item.id === restored.id ? restored : item));
+      setSettingsOpen(false);
+      setNotice(`Restored version ${version.version}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Version restore failed");
     }
   };
 
@@ -699,7 +918,17 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
 
   const toggleEnabled = async () => {
     if (!active) return;
-    await persist(!active.enabled);
+    if (active.archivedAt) {
+      setNotice("Restore this workflow before enabling it");
+      return;
+    }
+    const enabling = !active.enabled;
+    let forceEnableInvalid = false;
+    if (enabling && validationIssues.length > 0) {
+      forceEnableInvalid = window.confirm(`This workflow has ${validationIssues.length} validation issue${validationIssues.length === 1 ? "" : "s"}. Enable it anyway?`);
+      if (!forceEnableInvalid) return;
+    }
+    await persist(enabling, { forceEnableInvalid, reason: enabling ? "enabled" : "disabled" });
   };
 
   const addNode = (
@@ -753,7 +982,7 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
       { ...node, selected: true },
     ]);
     setSelectedId(id);
-    setDirty(true);
+    markDirty();
     setNotice("Added " + item.title);
 
     if (requestedCenter) return;
@@ -845,26 +1074,26 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
           items,
         ),
       );
-      setDirty(true);
+      markDirty();
       setNotice("Connected nodes");
     },
-    [connectionAllowed, recordHistory, setEdges],
+    [connectionAllowed, markDirty, recordHistory, setEdges],
   );
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<N9nFlowNode>[]) => {
       onNodesChange(changes);
-      if (changesWorkflowNodes(changes)) setDirty(true);
+      if (changesWorkflowNodes(changes)) markDirty();
     },
-    [onNodesChange],
+    [markDirty, onNodesChange],
   );
 
   const handleEdgesChange = useCallback(
     (changes: EdgeChange<Edge>[]) => {
       onEdgesChange(changes);
-      if (changesWorkflowEdges(changes)) setDirty(true);
+      if (changesWorkflowEdges(changes)) markDirty();
     },
-    [onEdgesChange],
+    [markDirty, onEdgesChange],
   );
 
   const updateNode = (patch: Partial<N9nFlowNode["data"]>) => {
@@ -878,7 +1107,7 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
       ),
     );
     setNodeTestResult(null);
-    setDirty(true);
+    markDirty();
   };
 
   const updateConfig = (key: string, value: unknown) => {
@@ -899,7 +1128,7 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
     );
     setSelectedId(null);
     setNodeTestResult(null);
-    setDirty(true);
+    markDirty();
     setNotice("Removed node");
   };
 
@@ -956,23 +1185,26 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
         <nav className="main-nav" aria-label="Main navigation">
           <button
             className={view === "flow" ? "is-active" : ""}
-            onClick={() => setView("flow")}
+            onClick={() => changeView("flow")}
           >
             <Zap size={17} /> Flows
           </button>
           <button
             className={view === "runs" ? "is-active" : ""}
-            onClick={() => setView("runs")}
+            onClick={() => changeView("runs")}
           >
             <History size={17} /> Runs
           </button>
-          <button className={view === "credentials" ? "is-active" : ""} onClick={() => setView("credentials")}>
+          <button className={view === "templates" ? "is-active" : ""} onClick={() => changeView("templates")}>
+            <LayoutTemplate size={17} /> Templates
+          </button>
+          <button className={view === "credentials" ? "is-active" : ""} onClick={() => changeView("credentials")}>
             <KeyRound size={17} /> Credentials
           </button>
-          <button className={view === "audit" ? "is-active" : ""} onClick={() => setView("audit")}>
+          <button className={view === "audit" ? "is-active" : ""} onClick={() => changeView("audit")}>
             <ShieldCheck size={17} /> Audit
           </button>
-          <button className={view === "account" ? "is-active" : ""} onClick={() => setView("account")}>
+          <button className={view === "account" ? "is-active" : ""} onClick={() => changeView("account")}>
             <UserRound size={17} /> Security
           </button>
         </nav>
@@ -982,28 +1214,42 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
           <button onClick={createFlow} aria-label="Create flow">
             <Plus size={15} />
           </button>
+          <button onClick={() => importInputRef.current?.click()} aria-label="Import workflow">
+            <Upload size={14} />
+          </button>
+        </div>
+
+        <input ref={importInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => void importWorkflowFile(event.target.files?.[0])} />
+        <div className="flow-filters">
+          <label><Search size={13} /><input aria-label="Search workflows" placeholder="Search flows" value={flowSearch} onChange={(event) => setFlowSearch(event.target.value)} /></label>
+          <div>
+            <select aria-label="Workflow status filter" value={flowFilter} onChange={(event) => setFlowFilter(event.target.value as typeof flowFilter)}>
+              <option value="active">Active</option><option value="archived">Archived</option><option value="all">All</option>
+            </select>
+            <select aria-label="Workflow sort" value={flowSort} onChange={(event) => setFlowSort(event.target.value as typeof flowSort)}>
+              <option value="updated">Updated</option><option value="created">Created</option><option value="name">Name</option>
+            </select>
+          </div>
         </div>
 
         <div className="flow-list">
-          {workflows.map((workflow) => (
+          {visibleWorkflows.map((workflow) => (
             <button
               key={workflow.id}
               className={active?.id === workflow.id ? "is-active" : ""}
-              onClick={() => {
-                setActive(workflow);
-                setView("flow");
-              }}
+              onClick={() => selectWorkflow(workflow)}
             >
               <span
                 className={
                   "flow-list__dot " +
-                  (workflow.enabled ? "is-enabled" : "")
+                  (workflow.archivedAt ? "is-archived" : workflow.enabled ? "is-enabled" : "")
                 }
               />
               <span>{workflow.name}</span>
               <ChevronRight size={14} />
             </button>
           ))}
+          {!visibleWorkflows.length && <div className="flow-list__empty">No matching flows</div>}
         </div>
 
         <div className="sidebar__footer">
@@ -1021,7 +1267,9 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
       </aside>
 
       <section className="workspace">
-        {view === "credentials" ? (
+        {view === "templates" ? (
+          <TemplatesView templates={templates} onUse={instantiateWorkflowTemplate} onDelete={removeWorkflowTemplate} />
+        ) : view === "credentials" ? (
           <CredentialsView csrfToken={csrfToken} credentials={credentials} onRefresh={loadCredentials} />
         ) : view === "audit" ? (
           <AuditView csrfToken={csrfToken} />
@@ -1038,7 +1286,7 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
                   aria-label="Flow name"
                   onChange={(event) => {
                     setActive({ ...active, name: event.target.value });
-                    setDirty(true);
+                    markDirty();
                   }}
                 />
                 <span>
@@ -1057,6 +1305,9 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
               </div>
 
               <div className="header-actions">
+                <button className="icon-button" onClick={() => void openWorkflowSettings()} aria-label="Workflow settings" title="Workflow settings">
+                  <Settings2 size={15} />
+                </button>
                 <button
                   className="icon-button"
                   onClick={undo}
@@ -1092,18 +1343,19 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
                     ? validationIssues.length + " issues"
                     : "Valid"}
                 </button>
-                <span className="save-state">
-                  {dirty ? "Unsaved" : notice}
+                <span className={"save-state " + (saveError ? "has-error" : "")} title={saveError || notice}>
+                  {saving ? "Saving…" : saveError ? "Save error" : dirty ? "Autosave pending" : notice}
                 </span>
                 <button
                   className={
                     "toggle " + (active.enabled ? "is-enabled" : "")
                   }
                   onClick={toggleEnabled}
+                  disabled={Boolean(active.archivedAt)}
                   aria-label={active.enabled ? "Disable flow" : "Enable flow"}
                 >
                   <span />
-                  {active.enabled ? "Live" : "Off"}
+                  {active.archivedAt ? "Archived" : active.enabled ? "Live" : "Off"}
                 </button>
                 <button
                   className="button button--quiet"
@@ -1116,7 +1368,7 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
                 <button
                   className="button button--run"
                   onClick={runFlow}
-                  disabled={running}
+                  disabled={running || Boolean(active.archivedAt)}
                 >
                   {running ? (
                     <Activity className="spin" size={15} />
@@ -1243,7 +1495,112 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
           </div>
         )}
       </section>
+      {settingsOpen && active && (
+        <WorkflowSettings
+          workflow={active}
+          versions={versions}
+          onPatch={patchWorkflowMetadata}
+          onClose={() => setSettingsOpen(false)}
+          onArchive={() => void workflowAction("archive")}
+          onRestore={() => void workflowAction("restore")}
+          onDuplicate={() => void workflowAction("duplicate")}
+          onDelete={() => void permanentlyDeleteWorkflow()}
+          onExport={() => void exportActiveWorkflow()}
+          onSaveTemplate={() => void saveActiveAsTemplate()}
+          onRestoreVersion={(version) => void restoreVersion(version)}
+        />
+      )}
     </main>
+  );
+}
+
+function WorkflowSettings({
+  workflow,
+  versions,
+  onPatch,
+  onClose,
+  onArchive,
+  onRestore,
+  onDuplicate,
+  onDelete,
+  onExport,
+  onSaveTemplate,
+  onRestoreVersion,
+}: {
+  workflow: Workflow;
+  versions: WorkflowVersion[];
+  onPatch: (patch: Partial<Pick<Workflow, "name" | "slug" | "description" | "tags">>) => void;
+  onClose: () => void;
+  onArchive: () => void;
+  onRestore: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onExport: () => void;
+  onSaveTemplate: () => void;
+  onRestoreVersion: (version: WorkflowVersion) => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="workflow-settings" role="dialog" aria-modal="true" aria-label="Workflow settings">
+        <header><div><span>Workflow management</span><h2>{workflow.name}</h2></div><button onClick={onClose} aria-label="Close workflow settings"><X size={16} /></button></header>
+        <div className="workflow-settings__body">
+          <div className="workflow-settings__fields">
+            <Field label="Name"><input aria-label="Workflow name" value={workflow.name} onChange={(event) => onPatch({ name: event.target.value })} /></Field>
+            <Field label="Webhook slug" hint="Unique lowercase letters, numbers, and hyphens."><input aria-label="Webhook slug" value={workflow.slug} onChange={(event) => onPatch({ slug: event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-") })} /></Field>
+            <Field label="Description"><textarea aria-label="Workflow description" rows={5} value={workflow.description} onChange={(event) => onPatch({ description: event.target.value })} /></Field>
+            <Field label="Tags" hint="Comma separated, up to 12 tags."><input aria-label="Workflow tags" value={workflow.tags.join(", ")} onChange={(event) => onPatch({ tags: event.target.value.split(",").map((tag) => tag.trim()).filter(Boolean) })} /></Field>
+            <div className="workflow-actions">
+              <button className="button button--quiet" onClick={onDuplicate}><Copy size={14} /> Duplicate</button>
+              <button className="button button--quiet" onClick={onExport}><Download size={14} /> Export JSON</button>
+              <button className="button button--quiet" onClick={onSaveTemplate}><LayoutTemplate size={14} /> Save template</button>
+              {workflow.archivedAt ? (
+                <button className="button button--quiet" onClick={onRestore}><Archive size={14} /> Restore archive</button>
+              ) : (
+                <button className="button button--quiet" onClick={onArchive}><Archive size={14} /> Archive</button>
+              )}
+              <button className="button button--danger" onClick={onDelete}><X size={14} /> Delete permanently</button>
+            </div>
+          </div>
+          <section className="version-history">
+            <header><History size={15} /><strong>Version history</strong><small>{versions.length} saved</small></header>
+            <div>
+              {versions.map((version) => (
+                <article key={version.id}>
+                  <div><strong>v{version.version}</strong><span>{version.reason}</span><small>{formatTime(version.createdAt)}</small></div>
+                  <button className="button button--quiet" onClick={() => onRestoreVersion(version)}>Restore</button>
+                </article>
+              ))}
+              {!versions.length && <p>No saved versions yet.</p>}
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function TemplatesView({ templates, onUse, onDelete }: {
+  templates: WorkflowTemplate[];
+  onUse: (template: WorkflowTemplate) => void;
+  onDelete: (template: WorkflowTemplate) => void;
+}) {
+  return (
+    <div className="security-view">
+      <header className="runs-header"><div><span>Reusable starting points</span><h1>Templates</h1></div></header>
+      <div className="template-grid">
+        {templates.map((template) => (
+          <article key={template.id}>
+            <div className="template-grid__icon"><LayoutTemplate size={20} /></div>
+            <h2>{template.name}</h2>
+            <p>{template.description || "No description"}</p>
+            <div>{template.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>
+            <small>{template.graph.nodes.length} nodes · updated {formatTime(template.updatedAt)}</small>
+            <footer><button className="button button--run" onClick={() => onUse(template)}><Plus size={14} /> Use template</button><button className="button button--danger" onClick={() => onDelete(template)}>Delete</button></footer>
+          </article>
+        ))}
+        {!templates.length && <div className="runs-empty">Save any workflow as a template from Workflow settings.</div>}
+      </div>
+    </div>
   );
 }
 

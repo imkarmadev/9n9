@@ -99,6 +99,33 @@ function createDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_audit_created
       ON audit_events(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS workflow_versions (
+      id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      snapshot TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(workflow_id) REFERENCES workflows(id) ON DELETE CASCADE,
+      UNIQUE(workflow_id, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workflow_versions
+      ON workflow_versions(workflow_id, version DESC);
+
+    CREATE TABLE IF NOT EXISTS workflow_templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      tags TEXT NOT NULL DEFAULT '[]',
+      graph TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workflow_templates_name
+      ON workflow_templates(name COLLATE NOCASE);
   `);
 
   const workflowColumns = instance
@@ -107,6 +134,16 @@ function createDatabase() {
   if (!workflowColumns.some((column) => column.name === "webhook_token_hash")) {
     instance.exec("ALTER TABLE workflows ADD COLUMN webhook_token_hash TEXT");
   }
+  if (!workflowColumns.some((column) => column.name === "description")) {
+    instance.exec("ALTER TABLE workflows ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+  }
+  if (!workflowColumns.some((column) => column.name === "tags")) {
+    instance.exec("ALTER TABLE workflows ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!workflowColumns.some((column) => column.name === "archived_at")) {
+    instance.exec("ALTER TABLE workflows ADD COLUMN archived_at TEXT");
+  }
+  instance.exec("CREATE INDEX IF NOT EXISTS idx_workflows_archived_updated ON workflows(archived_at, updated_at DESC)");
   const sessionColumns = instance
     .prepare("PRAGMA table_info(sessions)")
     .all() as Array<{ name: string }>;

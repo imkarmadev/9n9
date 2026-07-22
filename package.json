@@ -1,6 +1,6 @@
 {
   "name": "9n9",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -18,13 +18,14 @@
     "deploy:pi": "bash scripts/deploy-pi.sh"
   },
   "overrides": {
-    "postcss": "8.5.10"
+    "postcss": "8.5.10",
+    "sharp": "0.35.3"
   },
   "dependencies": {
     "@xyflow/react": "^12.10.0",
     "better-sqlite3": "^12.2.0",
     "lucide-react": "^0.468.0",
-    "next": "16.2.6",
+    "next": "16.2.11",
     "node-cron": "^4.2.1",
     "react": "19.2.6",
     "react-dom": "19.2.6"

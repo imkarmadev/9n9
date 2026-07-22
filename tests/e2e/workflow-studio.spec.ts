@@ -154,7 +154,7 @@ test("palette adds a visible selected node without overlapping existing nodes", 
   await expect(page.locator(".inspector").getByLabel("Name")).toHaveValue(
     "HTTP",
   );
-  await expect(page.locator(".save-state")).toHaveText("Unsaved");
+  await expect(page.locator(".save-state")).toHaveText(/Autosave pending|Saving…|Saved/);
 
   const handleTolerance = 4;
   await expect

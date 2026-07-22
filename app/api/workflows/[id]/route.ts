@@ -6,7 +6,7 @@ import {
 } from "@/lib/repository";
 import { refreshSchedules } from "@/lib/scheduler";
 import type { WorkflowGraph } from "@/lib/types";
-import { authorize } from "@/lib/security";
+import { authorize, clientIp } from "@/lib/security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,11 +37,22 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: "Invalid workflow graph" }, { status: 400 });
   }
 
-  const workflow = updateWorkflow(id, {
-    name: typeof body.name === "string" ? body.name : undefined,
-    enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
-    graph: body.graph as WorkflowGraph | undefined,
-  });
+  let workflow;
+  try {
+    workflow = updateWorkflow(id, {
+      name: typeof body.name === "string" ? body.name : undefined,
+      slug: typeof body.slug === "string" ? body.slug : undefined,
+      description: typeof body.description === "string" ? body.description : undefined,
+      tags: Array.isArray(body.tags) ? body.tags : undefined,
+      enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+      graph: body.graph as WorkflowGraph | undefined,
+      forceEnableInvalid: body.forceEnableInvalid === true,
+      reason: typeof body.reason === "string" ? body.reason : undefined,
+    }, { userId: auth.session.userId, ip: clientIp(request) });
+  } catch (error) {
+    const typed = error as Error & { code?: string; issues?: unknown };
+    return NextResponse.json({ error: typed.message, code: typed.code, issues: typed.issues }, { status: typed.code === "INVALID_WORKFLOW" || typed.message.includes("slug") ? 409 : 400 });
+  }
 
   if (!workflow) {
     return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
@@ -55,7 +66,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   const auth = authorize(request, true);
   if ("response" in auth) return auth.response;
   const { id } = await context.params;
-  if (!deleteWorkflow(id)) {
+  if (!deleteWorkflow(id, { userId: auth.session.userId, ip: clientIp(request) })) {
     return NextResponse.json({ error: "Workflow not found" }, { status: 404 });
   }
   refreshSchedules();

@@ -44,6 +44,44 @@ export interface Workflow {
   updatedAt: string;
   webhookProtected: boolean;
   webhookToken?: string;
+  description: string;
+  tags: string[];
+  archivedAt?: string;
+}
+
+export interface WorkflowSnapshot {
+  name: string;
+  slug: string;
+  description: string;
+  tags: string[];
+  enabled: boolean;
+  graph: WorkflowGraph;
+}
+
+export interface WorkflowVersion {
+  id: string;
+  workflowId: string;
+  version: number;
+  snapshot: WorkflowSnapshot;
+  reason: string;
+  createdAt: string;
+}
+
+export interface WorkflowTemplate {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  graph: WorkflowGraph;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowExport {
+  format: "9n9.workflow";
+  version: 1;
+  exportedAt: string;
+  workflow: Omit<WorkflowSnapshot, "enabled">;
 }
 
 export type RunStatus = "running" | "success" | "failed";

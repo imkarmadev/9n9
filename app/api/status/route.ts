@@ -20,7 +20,7 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     codex,
-    version: "0.3.0",
+    version: "0.4.0",
     telemetry: false,
   });
 }

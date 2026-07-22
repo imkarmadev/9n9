@@ -39,6 +39,7 @@ export async function testWorkflowNode(
       ? getWorkflow(workflowOrId)
       : workflowOrId;
   if (!workflow) throw new Error("Workflow not found");
+  if (workflow.archivedAt) throw new Error("Archived workflows cannot run");
 
   const node = workflow.graph.nodes.find((item) => item.id === nodeId);
   if (!node) throw new Error("Node not found");
@@ -256,6 +257,8 @@ export async function executeWorkflow(
       : workflowOrId;
 
   if (!workflow) throw new Error("Workflow not found");
+
+  if (workflow.archivedAt) throw new Error("Archived workflows cannot run");
 
   const run = createRun(workflow.id, triggerType, input);
   const trace: RunTrace[] = [];
