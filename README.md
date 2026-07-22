@@ -27,6 +27,11 @@ for Codex: 9n9 calls the private, already-authenticated `codex-agent` bridge.
 - Debounced race-safe autosave with unsaved-navigation protection
 - Immutable workflow version history with disabled-on-restore rollback
 - Portable JSON import/export and credential-free reusable templates
+- Box/multi-selection, group movement, copy/paste, duplication, and keyboard control
+- Context menus, shortcut help, reconnectable labeled edges, and edge deletion controls
+- Automatic layout, snap-to-grid, minimap, zoom-to-selected, and collapsible panels
+- Searchable palette with recent nodes, reusable node defaults, notes, groups, and sticky notes
+- Keyboard-accessible editing and a compact-screen palette/inspector fallback
 - Docker image for arm64 and amd64
 - Template values such as `{{input.body}}` and `{{steps.nodeId.body}}`
 
@@ -67,8 +72,10 @@ CSRF boundaries, hardened cookies, login rate limits, encrypted/masked
 credentials, server-side secret injection and redaction, webhook rotation,
 workflow lifecycle, metadata, search/filter/sort, race-safe autosave, navigation
 protection, import/export, templates, versions, activation confirmation,
-editing, execution, and run history. Failure screenshots, traces, and videos
-are written to `test-results/`.
+multi-selection, clipboard operations, group movement, edge editing and
+reconnection, layout/grid/minimap tools, node defaults and notes, canvas
+annotations, compact-screen behavior, editing, execution, and run history.
+Failure screenshots, traces, and videos are written to `test-results/`.
 
 ## Workflow management
 
@@ -82,6 +89,21 @@ are written to `test-results/`.
   start disabled. Templates intentionally omit credential bindings.
 - Enabling an invalid workflow requires an explicit confirmation and is also
   enforced by the server API.
+
+## Editor controls
+
+- Drag an empty canvas area to box-select; use Ctrl/Cmd+A for all nodes and
+  Shift-click to extend a selection. Moving one selected node moves the group.
+- Ctrl/Cmd+C, V, and D copy, paste, and duplicate. Arrow keys move the
+  selection; hold Shift to move by one grid unit. Press `?` for the complete
+  shortcut reference.
+- Right-click the canvas, a node, or an edge for contextual actions. Select an
+  edge to edit its label, delete it, or drag an endpoint to reconnect it.
+- Canvas tools provide automatic DAG layout, zoom-to-selected, a pannable
+  minimap, and 20-pixel grid snapping.
+- Search the palette, reuse recent nodes, or save a configured node as the
+  default for that node type. Groups, sticky notes, and node notes document a
+  workflow without participating in validation or execution.
 
 For faster browser-test iteration:
 

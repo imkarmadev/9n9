@@ -6,6 +6,10 @@ export type ValidationIssue = {
   nodeId?: string;
 };
 
+function isAnnotation(node: WorkflowNode) {
+  return node.data.kind.startsWith("annotation.");
+}
+
 function configured(value: unknown) {
   return typeof value === "string" ? value.trim().length > 0 : value != null;
 }
@@ -36,9 +40,10 @@ export function validateWorkflowGraph(
   edges: WorkflowEdge[],
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const nodeIds = new Set(nodes.map((node) => node.id));
+  const executableNodes = nodes.filter((node) => !isAnnotation(node));
+  const nodeIds = new Set(executableNodes.map((node) => node.id));
 
-  if (!nodes.some((node) => node.data.kind.startsWith("trigger."))) {
+  if (!executableNodes.some((node) => node.data.kind.startsWith("trigger."))) {
     issues.push({ id: "missing-trigger", message: "Add a trigger node." });
   }
 
@@ -51,7 +56,7 @@ export function validateWorkflowGraph(
     }
   }
 
-  for (const node of nodes) {
+  for (const node of executableNodes) {
     const incoming = edges.filter((edge) => edge.target === node.id);
     if (!node.data.kind.startsWith("trigger.") && incoming.length === 0) {
       issues.push({

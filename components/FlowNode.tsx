@@ -8,6 +8,8 @@ import {
   GitBranch,
   Globe2,
   MousePointerClick,
+  PanelsTopLeft,
+  StickyNote,
   Webhook,
 } from "lucide-react";
 import type { WorkflowNodeData } from "@/lib/types";
@@ -22,6 +24,8 @@ const icons = {
   "action.http": Globe2,
   "data.compose": Braces,
   "logic.condition": GitBranch,
+  "annotation.group": PanelsTopLeft,
+  "annotation.sticky": StickyNote,
 };
 
 const kindNames = {
@@ -32,19 +36,40 @@ const kindNames = {
   "action.http": "HTTP",
   "data.compose": "COMPOSE",
   "logic.condition": "CONDITION",
+  "annotation.group": "GROUP",
+  "annotation.sticky": "NOTE",
 };
 
 export function FlowNode({ data, selected }: NodeProps<N9nFlowNode>) {
   const Icon = icons[data.kind];
   const isTrigger = data.kind.startsWith("trigger.");
+  const isAnnotation = data.kind.startsWith("annotation.");
   const isCondition = data.kind === "logic.condition";
+
+  if (data.kind === "annotation.group") {
+    return (
+      <div className={`canvas-group canvas-group--${String(data.config.color ?? "purple")}${selected ? " is-selected" : ""}`}>
+        <PanelsTopLeft size={14} />
+        <strong>{data.label}</strong>
+      </div>
+    );
+  }
+
+  if (data.kind === "annotation.sticky") {
+    return (
+      <div className={`sticky-note sticky-note--${String(data.config.color ?? "yellow")}${selected ? " is-selected" : ""}`}>
+        <span><StickyNote size={14} /> {data.label}</span>
+        <p>{String(data.config.text ?? "Double-click to edit this note.")}</p>
+      </div>
+    );
+  }
 
   return (
     <div
       className={"flow-node flow-node--" + data.kind.replace(".", "-") +
         (selected ? " is-selected" : "")}
     >
-      {!isTrigger && (
+      {!isTrigger && !isAnnotation && (
         <Handle
           type="target"
           position={Position.Left}
@@ -79,13 +104,13 @@ export function FlowNode({ data, selected }: NodeProps<N9nFlowNode>) {
             style={{ top: "70%" }}
           />
         </>
-      ) : (
+      ) : !isAnnotation ? (
         <Handle
           type="source"
           position={Position.Right}
           className="flow-handle"
         />
-      )}
+      ) : null}
     </div>
   );
 }

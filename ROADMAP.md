@@ -39,7 +39,7 @@ cloud-account requirement, or telemetry. This file is the durable product plan.
 - Workflow version history and restore.
 - Invalid-flow activation confirmation.
 
-## v0.5 — Editor improvements
+## v0.5 — Editor improvements (complete)
 
 - Multi-select, box selection, copy/paste, duplication, and group movement.
 - Keyboard-shortcut help and context menus.

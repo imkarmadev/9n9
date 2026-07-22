@@ -43,6 +43,9 @@ export async function testWorkflowNode(
 
   const node = workflow.graph.nodes.find((item) => item.id === nodeId);
   if (!node) throw new Error("Node not found");
+  if (node.data.kind.startsWith("annotation.")) {
+    throw new Error("Canvas annotations cannot run");
+  }
 
   const startedAt = Date.now();
   try {
@@ -274,7 +277,11 @@ export async function executeWorkflow(
     })!;
   }
 
-  const nodes = new Map(workflow.graph.nodes.map((node) => [node.id, node]));
+  const nodes = new Map(
+    workflow.graph.nodes
+      .filter((node) => !node.data.kind.startsWith("annotation."))
+      .map((node) => [node.id, node]),
+  );
   const queue = [start.id];
   const visited = new Set<string>();
   let lastOutput: unknown = input;

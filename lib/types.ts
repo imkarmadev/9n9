@@ -5,7 +5,9 @@ export type NodeKind =
   | "action.codex"
   | "action.http"
   | "data.compose"
-  | "logic.condition";
+  | "logic.condition"
+  | "annotation.group"
+  | "annotation.sticky";
 
 export type NodeConfig = Record<string, unknown>;
 
@@ -13,6 +15,7 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   kind: NodeKind;
   label: string;
   config: NodeConfig;
+  notes?: string;
 }
 
 export interface WorkflowNode {
@@ -27,6 +30,7 @@ export interface WorkflowEdge {
   source: string;
   target: string;
   sourceHandle?: string | null;
+  label?: string;
 }
 
 export interface WorkflowGraph {

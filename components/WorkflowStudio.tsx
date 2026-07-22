@@ -1,5 +1,5 @@
 "use client";
-/* eslint-disable react-hooks/set-state-in-effect -- API hydration and flow selection intentionally synchronize local editor state. */
+/* eslint-disable react-hooks/set-state-in-effect -- API/local-storage hydration and flow selection intentionally synchronize editor state. */
 
 import {
   Background,
@@ -7,8 +7,11 @@ import {
   ConnectionMode,
   Controls,
   MarkerType,
+  MiniMap,
   ReactFlow,
+  SelectionMode,
   addEdge,
+  reconnectEdge,
   useEdgesState,
   useNodesState,
   type Connection,
@@ -23,6 +26,7 @@ import {
   Archive,
   Braces,
   Check,
+  ChevronLeft,
   ChevronRight,
   Clock3,
   Code2,
@@ -32,16 +36,22 @@ import {
   Globe2,
   History,
   KeyRound,
+  Keyboard,
+  LayoutDashboard,
   LayoutTemplate,
   LogOut,
   FlaskConical,
   MousePointerClick,
+  PanelLeftClose,
+  PanelRightClose,
+  PanelsTopLeft,
   Play,
   Plus,
   Redo2,
   Save,
   Search,
   Settings2,
+  StickyNote,
   ShieldCheck,
   UserRound,
   Upload,
@@ -60,6 +70,7 @@ import {
   type DragEvent as ReactDragEvent,
 } from "react";
 import { FlowNode, type N9nFlowNode } from "./FlowNode";
+import { WorkflowEdge as EditableWorkflowEdge, WorkflowEdgeActionsProvider } from "./WorkflowEdge";
 import { AccountView, AuditView, CredentialsView } from "./SecurityViews";
 import type { CredentialSummary } from "@/lib/credentials";
 import type {
@@ -80,6 +91,7 @@ import {
 } from "@/lib/workflow-validation";
 
 const nodeTypes = { n9n: FlowNode };
+const edgeTypes = { workflow: EditableWorkflowEdge };
 
 const NODE_WIDTH = 216;
 const NODE_HEIGHT = 68;
@@ -98,6 +110,16 @@ type PositionBounds = {
   right: number;
   bottom: number;
 };
+
+type CanvasMenu = {
+  x: number;
+  y: number;
+  kind: "pane" | "node" | "edge";
+  id?: string;
+  flowPosition?: { x: number; y: number };
+};
+
+type NodeDefaults = Partial<Record<NodeKind, NodeConfig>>;
 
 function cloneGraph(nodes: N9nFlowNode[], edges: Edge[]): GraphSnapshot {
   return structuredClone({ nodes, edges });
@@ -205,6 +227,9 @@ function serializeEdges(edges: Edge[]): WorkflowEdge[] {
     source: edge.source,
     target: edge.target,
     sourceHandle: edge.sourceHandle,
+    ...(typeof edge.label === "string" && edge.label.trim()
+      ? { label: edge.label.trim() }
+      : {}),
   }));
 }
 
@@ -274,6 +299,20 @@ const palette: Array<{
     group: "Logic",
     icon: GitBranch,
     config: { left: "{{input.body.status}}", operation: "equals", right: "ok" },
+  },
+  {
+    kind: "annotation.group",
+    title: "Canvas group",
+    group: "Canvas",
+    icon: PanelsTopLeft,
+    config: { width: 380, height: 220, color: "purple" },
+  },
+  {
+    kind: "annotation.sticky",
+    title: "Sticky note",
+    group: "Canvas",
+    icon: StickyNote,
+    config: { text: "Describe this part of the workflow.", color: "yellow" },
   },
 ];
 
@@ -354,6 +393,7 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
   const [nodes, setNodes, onNodesChange] = useNodesState<N9nFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [view, setView] = useState<"flow" | "runs" | "templates" | "credentials" | "audit" | "account">("flow");
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
@@ -376,6 +416,13 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
   const [notice, setNotice] = useState("Ready");
   const [saveError, setSaveError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [paletteCollapsed, setPaletteCollapsed] = useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [nodeSearch, setNodeSearch] = useState("");
+  const [recentKinds, setRecentKinds] = useState<NodeKind[]>([]);
+  const [nodeDefaults, setNodeDefaults] = useState<NodeDefaults>({});
+  const [canvasMenu, setCanvasMenu] = useState<CanvasMenu | null>(null);
   const [flowSearch, setFlowSearch] = useState("");
   const [flowFilter, setFlowFilter] = useState<"active" | "archived" | "all">("active");
   const [flowSort, setFlowSort] = useState<"updated" | "created" | "name">("updated");
@@ -391,6 +438,7 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
   const editRevisionRef = useRef(0);
   const failedRevisionRef = useRef(-1);
   const savingRef = useRef(false);
+  const clipboardRef = useRef<GraphSnapshot | null>(null);
 
   const markDirty = useCallback(() => {
     editRevisionRef.current += 1;
@@ -400,6 +448,15 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedId) ?? null,
+    [nodes, selectedId],
+  );
+  const selectedNodeIds = useMemo(
+    () =>
+      new Set(
+        nodes
+          .filter((node) => node.selected || node.id === selectedId)
+          .map((node) => node.id),
+      ),
     [nodes, selectedId],
   );
   const validationIssues = useMemo(
@@ -419,6 +476,15 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
     () =>
       nodes.map((node) => ({
         ...node,
+        style: node.data.kind === "annotation.group"
+          ? {
+              width: Number(node.data.config.width ?? 380),
+              height: Number(node.data.config.height ?? 220),
+              zIndex: -1,
+            }
+          : node.data.kind === "annotation.sticky"
+            ? { width: 190, minHeight: 130, zIndex: 0 }
+            : node.style,
         className: [
           typeof node.className === "string" ? node.className : "",
           invalidNodeIds.has(node.id) ? "has-validation-error" : "",
@@ -428,6 +494,15 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
       })),
     [invalidNodeIds, nodes],
   );
+  const renderEdges = useMemo(
+    () =>
+      edges.map((edge) => ({
+        ...edge,
+        type: "workflow",
+        markerEnd: edge.markerEnd ?? { type: MarkerType.ArrowClosed },
+      })),
+    [edges],
+  );
   const { canUndo, canRedo } = historyAvailability;
   const visibleWorkflows = useMemo(() => {
     const query = flowSearch.trim().toLowerCase();
@@ -436,6 +511,16 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
       .filter((workflow) => !query || workflow.name.toLowerCase().includes(query) || workflow.description.toLowerCase().includes(query) || workflow.tags.some((tag) => tag.includes(query)))
       .sort((left, right) => flowSort === "name" ? left.name.localeCompare(right.name) : new Date(flowSort === "created" ? right.createdAt : right.updatedAt).getTime() - new Date(flowSort === "created" ? left.createdAt : left.updatedAt).getTime());
   }, [flowFilter, flowSearch, flowSort, workflows]);
+
+  useEffect(() => {
+    try {
+      setRecentKinds(JSON.parse(localStorage.getItem("9n9.recent-nodes") ?? "[]") as NodeKind[]);
+      setNodeDefaults(JSON.parse(localStorage.getItem("9n9.node-defaults") ?? "{}") as NodeDefaults);
+    } catch {
+      setRecentKinds([]);
+      setNodeDefaults({});
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -476,6 +561,8 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
     setNodes(toFlowNodes(active));
     setEdges(active.graph.edges);
     setSelectedId(null);
+    setSelectedEdgeId(null);
+    setCanvasMenu(null);
     setDirty(false);
     editRevisionRef.current = 0;
     failedRevisionRef.current = -1;
@@ -542,6 +629,102 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
     });
   }, [edges, markDirty, nodes, setEdges, setNodes]);
 
+  const copySelection = useCallback(() => {
+    const copiedNodes = nodes.filter((node) => selectedNodeIds.has(node.id));
+    if (!copiedNodes.length) return null;
+    const copiedEdges = edges.filter(
+      (edge) => selectedNodeIds.has(edge.source) && selectedNodeIds.has(edge.target),
+    );
+    const snapshot = cloneGraph(copiedNodes, copiedEdges);
+    clipboardRef.current = snapshot;
+    setNotice(`Copied ${copiedNodes.length} node${copiedNodes.length === 1 ? "" : "s"}`);
+    return snapshot;
+  }, [edges, nodes, selectedNodeIds]);
+
+  const pasteSelection = useCallback((source?: GraphSnapshot | null) => {
+    const snapshot = source ?? clipboardRef.current;
+    if (!snapshot?.nodes.length) return;
+    recordHistory();
+    const ids = new Map<string, string>();
+    for (const node of snapshot.nodes) ids.set(node.id, createNodeId(node.data.kind));
+    const pastedNodes = snapshot.nodes.map((node) => ({
+      ...structuredClone(node),
+      id: ids.get(node.id)!,
+      position: { x: node.position.x + 36, y: node.position.y + 36 },
+      selected: true,
+    }));
+    const pastedEdges = snapshot.edges.map((edge, index) => ({
+      ...structuredClone(edge),
+      id: `${ids.get(edge.source)}-${edge.sourceHandle ?? "output"}-${ids.get(edge.target)}-${index}`,
+      source: ids.get(edge.source)!,
+      target: ids.get(edge.target)!,
+      selected: false,
+      type: "workflow",
+    }));
+    setNodes((items) => [
+      ...items.map((node) => ({ ...node, selected: false })),
+      ...pastedNodes,
+    ]);
+    setEdges((items) => [
+      ...items.map((edge) => ({ ...edge, selected: false })),
+      ...pastedEdges,
+    ]);
+    setSelectedId(pastedNodes.length === 1 ? pastedNodes[0].id : null);
+    setSelectedEdgeId(null);
+    clipboardRef.current = cloneGraph(pastedNodes, pastedEdges);
+    markDirty();
+    setNotice(`Pasted ${pastedNodes.length} node${pastedNodes.length === 1 ? "" : "s"}`);
+  }, [markDirty, recordHistory, setEdges, setNodes]);
+
+  const duplicateSelection = useCallback(() => {
+    const snapshot = copySelection();
+    if (snapshot) pasteSelection(snapshot);
+  }, [copySelection, pasteSelection]);
+
+  const deleteSelection = useCallback(() => {
+    const nodeIds = selectedNodeIds;
+    const edgeIds = new Set(
+      edges
+        .filter((edge) => edge.selected || edge.id === selectedEdgeId)
+        .map((edge) => edge.id),
+    );
+    if (nodeIds.size === 0 && edgeIds.size === 0) return;
+    recordHistory();
+    setNodes((items) => items.filter((node) => !nodeIds.has(node.id)));
+    setEdges((items) =>
+      items.filter(
+        (edge) =>
+          !edgeIds.has(edge.id) &&
+          !nodeIds.has(edge.source) &&
+          !nodeIds.has(edge.target),
+      ),
+    );
+    setSelectedId(null);
+    setSelectedEdgeId(null);
+    setNodeTestResult(null);
+    markDirty();
+    setNotice("Deleted selection");
+  }, [edges, markDirty, recordHistory, selectedEdgeId, selectedNodeIds, setEdges, setNodes]);
+
+  const selectAllNodes = useCallback(() => {
+    setNodes((items) => items.map((node) => ({ ...node, selected: true })));
+    setEdges((items) => items.map((edge) => ({ ...edge, selected: false })));
+    setSelectedId(null);
+    setSelectedEdgeId(null);
+    setNotice(`Selected ${nodes.length} nodes`);
+  }, [nodes.length, setEdges, setNodes]);
+
+  const moveSelection = useCallback((x: number, y: number) => {
+    if (!selectedNodeIds.size) return;
+    recordHistory();
+    setNodes((items) => items.map((node) =>
+      selectedNodeIds.has(node.id)
+        ? { ...node, position: { x: node.position.x + x, y: node.position.y + y } }
+        : node,
+    ));
+    markDirty();
+  }, [markDirty, recordHistory, selectedNodeIds, setNodes]);
+
   useEffect(() => {
     const handleKeyboard = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -562,39 +745,54 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
         redo();
         return;
       }
-      if (event.key !== "Backspace" && event.key !== "Delete") return;
-
-      const selectedNodeIds = new Set(
-        nodes
-          .filter((node) => node.selected || node.id === selectedId)
-          .map((node) => node.id),
-      );
-      const selectedEdgeIds = new Set(
-        edges.filter((edge) => edge.selected).map((edge) => edge.id),
-      );
-      if (selectedNodeIds.size === 0 && selectedEdgeIds.size === 0) return;
-
-      event.preventDefault();
-      recordHistory();
-      setNodes((items) =>
-        items.filter((node) => !selectedNodeIds.has(node.id)),
-      );
-      setEdges((items) =>
-        items.filter(
-          (edge) =>
-            !selectedEdgeIds.has(edge.id) &&
-            !selectedNodeIds.has(edge.source) &&
-            !selectedNodeIds.has(edge.target),
-        ),
-      );
-      setSelectedId(null);
-      markDirty();
-      setNotice("Deleted selection");
+      if (command && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        selectAllNodes();
+        return;
+      }
+      if (command && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        copySelection();
+        return;
+      }
+      if (command && event.key.toLowerCase() === "v") {
+        event.preventDefault();
+        pasteSelection();
+        return;
+      }
+      if (command && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        duplicateSelection();
+        return;
+      }
+      if (event.key === "?" || (event.key === "/" && event.shiftKey)) {
+        event.preventDefault();
+        setShortcutsOpen(true);
+        return;
+      }
+      if (event.key === "Escape") {
+        setCanvasMenu(null);
+        setShortcutsOpen(false);
+        return;
+      }
+      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key) && selectedNodeIds.size) {
+        event.preventDefault();
+        const amount = event.shiftKey ? 20 : 2;
+        moveSelection(
+          event.key === "ArrowLeft" ? -amount : event.key === "ArrowRight" ? amount : 0,
+          event.key === "ArrowUp" ? -amount : event.key === "ArrowDown" ? amount : 0,
+        );
+        return;
+      }
+      if (event.key === "Backspace" || event.key === "Delete") {
+        event.preventDefault();
+        deleteSelection();
+      }
     };
 
     window.addEventListener("keydown", handleKeyboard);
     return () => window.removeEventListener("keydown", handleKeyboard);
-  }, [edges, markDirty, nodes, recordHistory, redo, selectedId, setEdges, setNodes, undo]);
+  }, [copySelection, deleteSelection, duplicateSelection, moveSelection, pasteSelection, redo, selectAllNodes, selectedNodeIds.size, undo]);
 
   const persist = useCallback(
     async (enabledOverride?: boolean, options: { forceEnableInvalid?: boolean; reason?: string } = {}) => {
@@ -974,7 +1172,7 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
       data: {
         kind: item.kind,
         label: item.title,
-        config: { ...item.config },
+        config: { ...item.config, ...(nodeDefaults[item.kind] ?? {}) },
       },
     };
     setNodes((items) => [
@@ -983,7 +1181,13 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
     ]);
     setSelectedId(id);
     markDirty();
+    setInspectorCollapsed(false);
     setNotice("Added " + item.title);
+    setRecentKinds((current) => {
+      const next = [item.kind, ...current.filter((kind) => kind !== item.kind)].slice(0, 5);
+      localStorage.setItem("9n9.recent-nodes", JSON.stringify(next));
+      return next;
+    });
 
     if (requestedCenter) return;
     requestAnimationFrame(() => {
@@ -1030,8 +1234,15 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
     (connection: Connection | Edge) => {
       const { source, target } = connection;
       if (!source || !target || source === target) return false;
+      const sourceNode = nodes.find((node) => node.id === source);
       const targetNode = nodes.find((node) => node.id === target);
-      if (!targetNode || targetNode.data.kind.startsWith("trigger.")) {
+      if (
+        !sourceNode ||
+        !targetNode ||
+        sourceNode.data.kind.startsWith("annotation.") ||
+        targetNode.data.kind.startsWith("annotation.") ||
+        targetNode.data.kind.startsWith("trigger.")
+      ) {
         return false;
       }
       if (
@@ -1068,7 +1279,7 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
           {
             ...connection,
             id: edgeId,
-            type: "smoothstep",
+            type: "workflow",
             markerEnd: { type: MarkerType.ArrowClosed },
           },
           items,
@@ -1079,6 +1290,107 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
     },
     [connectionAllowed, markDirty, recordHistory, setEdges],
   );
+
+  const reconnect = useCallback((oldEdge: Edge, connection: Connection) => {
+    const { source, target } = connection;
+    const sourceNode = nodes.find((node) => node.id === source);
+    const targetNode = nodes.find((node) => node.id === target);
+    const remaining = edges.filter((edge) => edge.id !== oldEdge.id);
+    const allowed = Boolean(
+      source &&
+      target &&
+      source !== target &&
+      sourceNode &&
+      targetNode &&
+      !sourceNode.data.kind.startsWith("annotation.") &&
+      !targetNode.data.kind.startsWith("annotation.") &&
+      !targetNode.data.kind.startsWith("trigger.") &&
+      !remaining.some((edge) => edge.target === target) &&
+      !remaining.some((edge) => edge.source === source && edge.target === target && edge.sourceHandle === connection.sourceHandle) &&
+      !wouldCreateCycle(source, target, remaining),
+    );
+    if (!allowed) {
+      setNotice("That reconnection is not allowed");
+      return;
+    }
+    recordHistory();
+    setEdges((items) => reconnectEdge(oldEdge, connection, items));
+    markDirty();
+    setNotice("Reconnected edge");
+  }, [edges, markDirty, nodes, recordHistory, setEdges]);
+
+  const updateEdgeLabel = useCallback((id: string, label: string) => {
+    setEdges((items) => items.map((edge) => edge.id === id ? { ...edge, label } : edge));
+    markDirty();
+  }, [markDirty, setEdges]);
+
+  const removeEdge = useCallback((id: string) => {
+    recordHistory();
+    setEdges((items) => items.filter((edge) => edge.id !== id));
+    setSelectedEdgeId(null);
+    markDirty();
+    setNotice("Deleted edge");
+  }, [markDirty, recordHistory, setEdges]);
+
+  const autoLayout = useCallback(() => {
+    const executable = nodes.filter((node) => !node.data.kind.startsWith("annotation."));
+    if (!executable.length) return;
+    recordHistory();
+    const ids = new Set(executable.map((node) => node.id));
+    const level = new Map(executable.map((node) => [node.id, 0]));
+    const incoming = new Map(executable.map((node) => [node.id, 0]));
+    for (const edge of edges) {
+      if (ids.has(edge.source) && ids.has(edge.target)) {
+        incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1);
+      }
+    }
+    const queue = executable.filter((node) => incoming.get(node.id) === 0).map((node) => node.id);
+    while (queue.length) {
+      const id = queue.shift()!;
+      for (const edge of edges.filter((candidate) => candidate.source === id && ids.has(candidate.target))) {
+        level.set(edge.target, Math.max(level.get(edge.target) ?? 0, (level.get(id) ?? 0) + 1));
+        incoming.set(edge.target, (incoming.get(edge.target) ?? 1) - 1);
+        if (incoming.get(edge.target) === 0) queue.push(edge.target);
+      }
+    }
+    const rows = new Map<number, number>();
+    setNodes((items) => items.map((node) => {
+      if (!ids.has(node.id)) return node;
+      const column = level.get(node.id) ?? 0;
+      const row = rows.get(column) ?? 0;
+      rows.set(column, row + 1);
+      return { ...node, position: { x: 80 + column * 280, y: 80 + row * 120 } };
+    }));
+    markDirty();
+    setNotice("Applied automatic layout");
+    requestAnimationFrame(() => void flowInstance?.fitView({ duration: 300, padding: 0.18 }));
+  }, [edges, flowInstance, markDirty, nodes, recordHistory, setNodes]);
+
+  const zoomToSelected = useCallback(() => {
+    const selected = nodes.filter((node) => selectedNodeIds.has(node.id));
+    if (!selected.length) {
+      setNotice("Select one or more nodes first");
+      return;
+    }
+    void flowInstance?.fitView({ nodes: selected, duration: 250, padding: 0.35, maxZoom: 1.25 });
+  }, [flowInstance, nodes, selectedNodeIds]);
+
+  const saveNodeDefault = useCallback(() => {
+    if (!selectedNode || selectedNode.data.kind.startsWith("annotation.")) return;
+    const next = { ...nodeDefaults, [selectedNode.data.kind]: structuredClone(selectedNode.data.config) };
+    setNodeDefaults(next);
+    localStorage.setItem("9n9.node-defaults", JSON.stringify(next));
+    setNotice(`${selectedNode.data.label} settings saved as the node default`);
+  }, [nodeDefaults, selectedNode]);
+
+  const resetNodeDefault = useCallback(() => {
+    if (!selectedNode) return;
+    const next = { ...nodeDefaults };
+    delete next[selectedNode.data.kind];
+    setNodeDefaults(next);
+    localStorage.setItem("9n9.node-defaults", JSON.stringify(next));
+    setNotice("Node default reset");
+  }, [nodeDefaults, selectedNode]);
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<N9nFlowNode>[]) => {
@@ -1118,18 +1430,7 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
   };
 
   const removeSelected = () => {
-    if (!selectedId) return;
-    recordHistory();
-    setNodes((items) => items.filter((node) => node.id !== selectedId));
-    setEdges((items) =>
-      items.filter(
-        (edge) => edge.source !== selectedId && edge.target !== selectedId,
-      ),
-    );
-    setSelectedId(null);
-    setNodeTestResult(null);
-    markDirty();
-    setNotice("Removed node");
+    deleteSelection();
   };
 
   const selectValidationIssue = (issue: ValidationIssue) => {
@@ -1326,6 +1627,9 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
                 >
                   <Redo2 size={15} />
                 </button>
+                <button className="icon-button" onClick={() => setShortcutsOpen(true)} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
+                  <Keyboard size={15} />
+                </button>
                 <button
                   className={
                     "validation-button " +
@@ -1380,8 +1684,18 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
               </div>
             </header>
 
-            <div className="studio">
-              <NodePalette onAdd={addNode} />
+            <div className={`studio${paletteCollapsed ? " is-palette-collapsed" : ""}${inspectorCollapsed ? " is-inspector-collapsed" : ""}`}>
+              {paletteCollapsed ? (
+                <button className="panel-reopen panel-reopen--left" onClick={() => setPaletteCollapsed(false)} aria-label="Open node palette"><ChevronRight size={15} /></button>
+              ) : (
+                <NodePalette
+                  onAdd={addNode}
+                  onCollapse={() => setPaletteCollapsed(true)}
+                  search={nodeSearch}
+                  onSearch={setNodeSearch}
+                  recentKinds={recentKinds}
+                />
+              )}
 
               <div
                 className={"canvas " + (dragActive ? "is-drag-target" : "")}
@@ -1401,13 +1715,21 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
                 }}
                 onDrop={handleCanvasDrop}
               >
+                <div className="canvas-toolbar" aria-label="Canvas tools">
+                  <button onClick={autoLayout} title="Automatic layout" aria-label="Automatic layout"><LayoutDashboard size={14} /></button>
+                  <button onClick={zoomToSelected} title="Zoom to selected" aria-label="Zoom to selected"><Search size={14} /></button>
+                  <button onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts" aria-label="Keyboard shortcuts"><Keyboard size={14} /></button>
+                </div>
+                <WorkflowEdgeActionsProvider actions={{ updateLabel: updateEdgeLabel, remove: removeEdge }}>
                 <ReactFlow
                   nodes={renderNodes}
-                  edges={edges}
+                  edges={renderEdges}
                   nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
                   onNodesChange={handleNodesChange}
                   onEdgesChange={handleEdgesChange}
                   onConnect={connect}
+                  onReconnect={reconnect}
                   isValidConnection={connectionAllowed}
                   onConnectStart={() => {
                     connectingRef.current = true;
@@ -1421,22 +1743,59 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
                   onNodeDragStart={recordHistory}
                   onNodeClick={(_, node) => {
                     setSelectedId(node.id);
+                    setSelectedEdgeId(null);
+                    setInspectorCollapsed(false);
                     if (nodeTestResult?.nodeId !== node.id) {
                       setNodeTestResult(null);
                     }
                   }}
-                  onEdgeClick={() => setSelectedId(null)}
+                  onNodeContextMenu={(event, node) => {
+                    event.preventDefault();
+                    setNodes((items) => items.map((item) => ({ ...item, selected: item.id === node.id || (item.selected && node.selected) })));
+                    setSelectedId(node.id);
+                    setSelectedEdgeId(null);
+                    setCanvasMenu({ x: event.clientX, y: event.clientY, kind: "node", id: node.id });
+                  }}
+                  onEdgeClick={(_, edge) => { setSelectedId(null); setSelectedEdgeId(edge.id); }}
+                  onEdgeContextMenu={(event, edge) => {
+                    event.preventDefault();
+                    setSelectedId(null);
+                    setSelectedEdgeId(edge.id);
+                    setEdges((items) => items.map((item) => ({ ...item, selected: item.id === edge.id })));
+                    setCanvasMenu({ x: event.clientX, y: event.clientY, kind: "edge", id: edge.id });
+                  }}
+                  onSelectionChange={({ nodes: selectedNodes, edges: selectedEdges }) => {
+                    setSelectedId(selectedNodes.length === 1 ? selectedNodes[0].id : null);
+                    setSelectedEdgeId(selectedEdges.length === 1 ? selectedEdges[0].id : null);
+                  }}
                   onPaneClick={() => {
                     setSelectedId(null);
+                    setSelectedEdgeId(null);
+                    setCanvasMenu(null);
                     setValidationOpen(false);
+                  }}
+                  onPaneContextMenu={(event) => {
+                    event.preventDefault();
+                    setCanvasMenu({
+                      x: event.clientX,
+                      y: event.clientY,
+                      kind: "pane",
+                      flowPosition: flowInstance?.screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+                    });
                   }}
                   fitView
                   minZoom={0.35}
                   maxZoom={1.7}
                   connectionMode={ConnectionMode.Strict}
                   connectionRadius={28}
+                  selectionOnDrag
+                  selectionMode={SelectionMode.Partial}
+                  panOnDrag={[1, 2]}
+                  multiSelectionKeyCode={["Meta", "Control", "Shift"]}
+                  snapToGrid
+                  snapGrid={[20, 20]}
                   defaultEdgeOptions={{
-                    type: "smoothstep",
+                    type: "workflow",
                     markerEnd: { type: MarkerType.ArrowClosed },
                   }}
                   proOptions={{ hideAttribution: true }}
@@ -1449,7 +1808,9 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
                     color="#30333a"
                   />
                   <Controls showInteractive={false} />
+                  <MiniMap pannable zoomable nodeStrokeWidth={2} ariaLabel="Workflow minimap" />
                 </ReactFlow>
+                </WorkflowEdgeActionsProvider>
 
                 {validationOpen && (
                   <ValidationPanel
@@ -1465,16 +1826,46 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
                     onClose={() => setRunResult(null)}
                   />
                 )}
+                {canvasMenu && (
+                  <CanvasContextMenu
+                    menu={canvasMenu}
+                    onClose={() => setCanvasMenu(null)}
+                    onCopy={() => { copySelection(); setCanvasMenu(null); }}
+                    onDuplicate={() => { duplicateSelection(); setCanvasMenu(null); }}
+                    onDelete={() => { deleteSelection(); setCanvasMenu(null); }}
+                    onDeleteEdge={() => { if (canvasMenu.id) removeEdge(canvasMenu.id); setCanvasMenu(null); }}
+                    onLabelEdge={() => { setSelectedEdgeId(canvasMenu.id ?? null); setCanvasMenu(null); }}
+                    onSticky={() => {
+                      const item = palette.find((candidate) => candidate.kind === "annotation.sticky");
+                      if (item) addNode(item, canvasMenu.flowPosition);
+                      setCanvasMenu(null);
+                    }}
+                    onGroup={() => {
+                      const item = palette.find((candidate) => candidate.kind === "annotation.group");
+                      if (item) addNode(item, canvasMenu.flowPosition);
+                      setCanvasMenu(null);
+                    }}
+                    onPaste={() => { pasteSelection(); setCanvasMenu(null); }}
+                    onLayout={() => { autoLayout(); setCanvasMenu(null); }}
+                  />
+                )}
               </div>
 
-              <Inspector
+              {inspectorCollapsed ? (
+                <button className="panel-reopen panel-reopen--right" onClick={() => setInspectorCollapsed(false)} aria-label="Open inspector"><ChevronLeft size={15} /></button>
+              ) : <Inspector
                 node={selectedNode}
                 workflow={active}
                 nodes={nodes}
                 edges={edges}
                 onLabel={(value) => updateNode({ label: value })}
                 onConfig={updateConfig}
+                onNotes={(value) => updateNode({ notes: value })}
                 onRemove={removeSelected}
+                onCollapse={() => setInspectorCollapsed(true)}
+                onSaveDefault={saveNodeDefault}
+                onResetDefault={resetNodeDefault}
+                hasDefault={Boolean(selectedNode && nodeDefaults[selectedNode.data.kind])}
                 testInput={nodeTestInput}
                 onTestInput={setNodeTestInput}
                 testResult={nodeTestResult}
@@ -1482,7 +1873,7 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
                 onTest={() => void testSelectedNode()}
                 credentials={credentials}
                 onRotateWebhook={rotateWebhook}
-              />
+              />}
             </div>
           </>
         ) : (
@@ -1510,6 +1901,7 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
           onRestoreVersion={(version) => void restoreVersion(version)}
         />
       )}
+      {shortcutsOpen && <ShortcutHelp onClose={() => setShortcutsOpen(false)} />}
     </main>
   );
 }
@@ -1606,49 +1998,132 @@ function TemplatesView({ templates, onUse, onDelete }: {
 
 function NodePalette({
   onAdd,
+  onCollapse,
+  search,
+  onSearch,
+  recentKinds,
 }: {
   onAdd: (item: (typeof palette)[number]) => void;
+  onCollapse: () => void;
+  search: string;
+  onSearch: (value: string) => void;
+  recentKinds: NodeKind[];
 }) {
-  const groups = ["Triggers", "Actions", "Data", "Logic"];
+  const groups = ["Triggers", "Actions", "Data", "Logic", "Canvas"];
+  const query = search.trim().toLowerCase();
+  const visible = palette.filter((item) =>
+    !query || item.title.toLowerCase().includes(query) || item.kind.includes(query) || item.group.toLowerCase().includes(query),
+  );
+  const recent = recentKinds
+    .map((kind) => palette.find((item) => item.kind === kind))
+    .filter((item): item is (typeof palette)[number] => Boolean(item))
+    .filter((item) => visible.includes(item));
+  const button = (item: (typeof palette)[number]) => {
+    const Icon = item.icon;
+    return (
+      <button
+        key={item.kind}
+        draggable
+        data-node-kind={item.kind}
+        onClick={() => onAdd(item)}
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = "copy";
+          event.dataTransfer.setData(DRAG_MIME, item.kind);
+          event.dataTransfer.setData("text/plain", item.kind);
+        }}
+      >
+        <Icon size={16} />
+        {item.title}
+        <Plus size={13} />
+      </button>
+    );
+  };
   return (
     <aside className="palette">
       <div className="panel-title">
         <span>Nodes</span>
-        <small>drag or click</small>
+        <button onClick={onCollapse} aria-label="Collapse node palette" title="Collapse palette"><PanelLeftClose size={14} /></button>
       </div>
+      <label className="node-search"><Search size={13} /><input aria-label="Search nodes" placeholder="Search nodes" value={search} onChange={(event) => onSearch(event.target.value)} /></label>
+      {recent.length > 0 && !query && (
+        <div className="palette__group palette__recent"><span>Recent</span>{recent.map(button)}</div>
+      )}
       {groups.map((group) => (
         <div className="palette__group" key={group}>
           <span>{group}</span>
-          {palette
+          {visible
             .filter((item) => item.group === group)
-            .map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.kind}
-                  draggable
-                  data-node-kind={item.kind}
-                  onClick={() => onAdd(item)}
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = "copy";
-                    event.dataTransfer.setData(DRAG_MIME, item.kind);
-                    event.dataTransfer.setData("text/plain", item.kind);
-                  }}
-                >
-                  <Icon size={16} />
-                  {item.title}
-                  <Plus size={13} />
-                </button>
-              );
-            })}
+            .map(button)}
         </div>
       ))}
+      {!visible.length && <div className="palette__empty">No matching nodes</div>}
       <div className="template-tip">
         <Braces size={14} />
         Use <code>{"{{input.body}}"}</code> or{" "}
         <code>{"{{steps.nodeId.body}}"}</code>
       </div>
     </aside>
+  );
+}
+
+function CanvasContextMenu({
+  menu,
+  onClose,
+  onCopy,
+  onDuplicate,
+  onDelete,
+  onDeleteEdge,
+  onLabelEdge,
+  onSticky,
+  onGroup,
+  onPaste,
+  onLayout,
+}: {
+  menu: CanvasMenu;
+  onClose: () => void;
+  onCopy: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onDeleteEdge: () => void;
+  onLabelEdge: () => void;
+  onSticky: () => void;
+  onGroup: () => void;
+  onPaste: () => void;
+  onLayout: () => void;
+}) {
+  return (
+    <div className="canvas-context" role="menu" aria-label="Canvas context menu" style={{ left: menu.x, top: menu.y }} onMouseLeave={onClose}>
+      {menu.kind === "node" ? (
+        <><button role="menuitem" onClick={onCopy}><Copy size={13} /> Copy <kbd>⌘C</kbd></button><button role="menuitem" onClick={onDuplicate}><Plus size={13} /> Duplicate <kbd>⌘D</kbd></button><button role="menuitem" className="is-danger" onClick={onDelete}><X size={13} /> Delete <kbd>⌫</kbd></button></>
+      ) : menu.kind === "edge" ? (
+        <><button role="menuitem" onClick={onLabelEdge}><Braces size={13} /> Edit label</button><button role="menuitem" className="is-danger" onClick={onDeleteEdge}><X size={13} /> Delete edge</button></>
+      ) : (
+        <><button role="menuitem" onClick={onPaste}><Copy size={13} /> Paste <kbd>⌘V</kbd></button><button role="menuitem" onClick={onSticky}><StickyNote size={13} /> Add sticky note</button><button role="menuitem" onClick={onGroup}><PanelsTopLeft size={13} /> Add canvas group</button><button role="menuitem" onClick={onLayout}><LayoutDashboard size={13} /> Automatic layout</button></>
+      )}
+    </div>
+  );
+}
+
+function ShortcutHelp({ onClose }: { onClose: () => void }) {
+  const shortcuts = [
+    ["Select all nodes", "Ctrl/Cmd + A"],
+    ["Copy selection", "Ctrl/Cmd + C"],
+    ["Paste selection", "Ctrl/Cmd + V"],
+    ["Duplicate selection", "Ctrl/Cmd + D"],
+    ["Undo / redo", "Ctrl/Cmd + Z / Shift + Z"],
+    ["Move selection", "Arrow keys"],
+    ["Move by grid", "Shift + Arrow keys"],
+    ["Delete selection", "Backspace / Delete"],
+    ["Close menus", "Escape"],
+    ["Open this help", "?"],
+  ];
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="shortcut-help" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+        <header><div><span>Editor reference</span><h2>Keyboard shortcuts</h2></div><button onClick={onClose} aria-label="Close keyboard shortcuts"><X size={16} /></button></header>
+        <div>{shortcuts.map(([name, keys]) => <p key={name}><span>{name}</span><kbd>{keys}</kbd></p>)}</div>
+      </section>
+    </div>
   );
 }
 
@@ -1702,7 +2177,12 @@ function Inspector({
   edges,
   onLabel,
   onConfig,
+  onNotes,
   onRemove,
+  onCollapse,
+  onSaveDefault,
+  onResetDefault,
+  hasDefault,
   testInput,
   onTestInput,
   testResult,
@@ -1717,7 +2197,12 @@ function Inspector({
   edges: Edge[];
   onLabel: (value: string) => void;
   onConfig: (key: string, value: unknown) => void;
+  onNotes: (value: string) => void;
   onRemove: () => void;
+  onCollapse: () => void;
+  onSaveDefault: () => void;
+  onResetDefault: () => void;
+  hasDefault: boolean;
   testInput: string;
   onTestInput: (value: string) => void;
   testResult: NodeTestResult | null;
@@ -1795,7 +2280,7 @@ function Inspector({
     <aside className="inspector">
       <div className="panel-title">
         <span>Configure</span>
-        <small>{node.data.kind}</small>
+        <div><small>{node.data.kind}</small><button onClick={onCollapse} aria-label="Collapse inspector" title="Collapse inspector"><PanelRightClose size={14} /></button></div>
       </div>
 
       <Field label="Name">
@@ -1804,6 +2289,20 @@ function Inspector({
           onChange={(event) => onLabel(event.target.value)}
         />
       </Field>
+
+      {node.data.kind === "annotation.sticky" && (
+        <>
+          <Field label="Text"><textarea aria-label="Sticky note text" rows={8} value={text("text")} onChange={textarea("text")} /></Field>
+          <Field label="Color"><select aria-label="Sticky note color" value={text("color") || "yellow"} onChange={(event) => onConfig("color", event.target.value)}><option value="yellow">Yellow</option><option value="purple">Purple</option><option value="blue">Blue</option><option value="green">Green</option></select></Field>
+        </>
+      )}
+
+      {node.data.kind === "annotation.group" && (
+        <>
+          <div className="field-row"><Field label="Width"><input aria-label="Group width" type="number" min="240" max="1200" value={text("width") || "380"} onChange={input("width")} /></Field><Field label="Height"><input aria-label="Group height" type="number" min="140" max="900" value={text("height") || "220"} onChange={input("height")} /></Field></div>
+          <Field label="Color"><select aria-label="Group color" value={text("color") || "purple"} onChange={(event) => onConfig("color", event.target.value)}><option value="purple">Purple</option><option value="blue">Blue</option><option value="green">Green</option><option value="orange">Orange</option></select></Field>
+        </>
+      )}
 
       {node.data.kind === "action.codex" && (
         <>
@@ -1942,6 +2441,10 @@ function Inspector({
         </div>
       )}
 
+      <Field label="Node notes" hint="Internal documentation stored with this workflow.">
+        <textarea aria-label="Node notes" rows={4} value={node.data.notes ?? ""} onChange={(event) => onNotes(event.target.value)} />
+      </Field>
+
       {availableFields.length > 0 && (
         <section className="expression-picker">
           <header>
@@ -1973,7 +2476,7 @@ function Inspector({
         </section>
       )}
 
-      <section className="node-test">
+      {!node.data.kind.startsWith("annotation.") && <section className="node-test">
         <header>
           <div>
             <FlaskConical size={14} />
@@ -2013,7 +2516,14 @@ function Inspector({
             </pre>
           </div>
         )}
-      </section>
+      </section>}
+
+      {!node.data.kind.startsWith("annotation.") && (
+        <div className="node-defaults">
+          <button className="button button--quiet" onClick={onSaveDefault}>Use settings as default</button>
+          {hasDefault && <button className="danger-link" onClick={onResetDefault}>Reset default</button>}
+        </div>
+      )}
 
       <button className="danger-link" onClick={onRemove}>
         Remove node
