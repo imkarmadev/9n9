@@ -11,11 +11,16 @@ export type NodeKind =
 
 export type NodeConfig = Record<string, unknown>;
 
+export type SampleMode = "development" | "production";
+
+export type NodeSamples = Partial<Record<SampleMode, unknown>>;
+
 export interface WorkflowNodeData extends Record<string, unknown> {
   kind: NodeKind;
   label: string;
   config: NodeConfig;
   notes?: string;
+  samples?: NodeSamples;
 }
 
 export interface WorkflowNode {

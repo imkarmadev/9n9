@@ -77,6 +77,7 @@ import type {
   NodeConfig,
   NodeKind,
   NodeTestResult,
+  SampleMode,
   Workflow,
   WorkflowEdge,
   WorkflowNode,
@@ -84,6 +85,11 @@ import type {
   WorkflowTemplate,
   WorkflowVersion,
 } from "@/lib/types";
+import {
+  expressionPaths,
+  previewTemplate,
+  type TemplateContext,
+} from "@/lib/template";
 import {
   validateWorkflowGraph,
   wouldCreateCycle,
@@ -524,16 +530,18 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
 
   const load = useCallback(async () => {
     try {
-      const [flowList, currentStatus, credentialList, templateList] = await Promise.all([
+      const [flowList, currentStatus, credentialList, templateList, runList] = await Promise.all([
         jsonRequest<Workflow[]>("/api/workflows?archived=all", csrfToken),
         jsonRequest<ServiceStatus>("/api/status", csrfToken),
         jsonRequest<CredentialSummary[]>("/api/credentials", csrfToken),
         jsonRequest<WorkflowTemplate[]>("/api/templates", csrfToken),
+        jsonRequest<WorkflowRun[]>("/api/runs", csrfToken),
       ]);
       setWorkflows(flowList);
       setService(currentStatus);
       setCredentials(credentialList);
       setTemplates(templateList);
+      setRuns(runList);
       setActive((current) => {
         if (current) {
           return flowList.find((item) => item.id === current.id) ?? flowList[0];
@@ -1429,6 +1437,31 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
     });
   };
 
+  const updateSample = (mode: SampleMode, value: unknown) => {
+    if (!selectedNode) return;
+    updateNode({
+      samples: { ...selectedNode.data.samples, [mode]: value },
+    });
+  };
+
+  const pinRunSamples = (run: WorkflowRun, mode: SampleMode) => {
+    recordHistory();
+    const outputs = new Map(run.trace.map((trace) => [trace.nodeId, trace.output]));
+    setNodes((items) => items.map((node) => {
+      const value = node.data.kind.startsWith("trigger.") ? run.input : outputs.get(node.id);
+      if (value === undefined) return node;
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          samples: { ...node.data.samples, [mode]: structuredClone(value) },
+        },
+      };
+    }));
+    markDirty();
+    setNotice(`Pinned run data to ${mode} samples`);
+  };
+
   const removeSelected = () => {
     deleteSelection();
   };
@@ -1861,6 +1894,9 @@ export function WorkflowStudio({ csrfToken, username }: { csrfToken: string; use
                 onLabel={(value) => updateNode({ label: value })}
                 onConfig={updateConfig}
                 onNotes={(value) => updateNode({ notes: value })}
+                onSample={updateSample}
+                runs={runs.filter((run) => run.workflowId === active.id)}
+                onPinRun={pinRunSamples}
                 onRemove={removeSelected}
                 onCollapse={() => setInspectorCollapsed(true)}
                 onSaveDefault={saveNodeDefault}
@@ -2170,6 +2206,63 @@ function ValidationPanel({
   );
 }
 
+function ExpressionEditor({
+  value,
+  onChange,
+  onFocus,
+  paths,
+  rows,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onFocus: () => void;
+  paths: string[];
+  rows: number;
+  ariaLabel: string;
+}) {
+  const [focused, setFocused] = useState(false);
+  const overlayRef = useRef<HTMLPreElement>(null);
+  const lastOpen = value.lastIndexOf("{{");
+  const lastClose = value.lastIndexOf("}}");
+  const fragment = lastOpen > lastClose ? value.slice(lastOpen + 2).trim().toLowerCase() : "";
+  const suggestions = focused && lastOpen > lastClose
+    ? [...new Set(paths)].filter((path) => !fragment || path.toLowerCase().includes(fragment)).slice(0, 8)
+    : [];
+  const complete = (path: string) => {
+    onChange(value.slice(0, lastOpen) + `{{${path}}}`);
+  };
+  const highlighted = value.split(/(\{\{[\s\S]*?\}\})/g).map((part, index) =>
+    part.startsWith("{{") && part.endsWith("}}")
+      ? <mark key={index}>{part}</mark>
+      : <span key={index}>{part}</span>,
+  );
+  return (
+    <div className={`expression-editor${focused ? " is-focused" : ""}`}>
+      <pre ref={overlayRef} aria-hidden="true">{highlighted}{"\n"}</pre>
+      <textarea
+        aria-label={ariaLabel}
+        rows={rows}
+        value={value}
+        spellCheck={false}
+        onChange={(event) => onChange(event.target.value)}
+        onFocus={() => { setFocused(true); onFocus(); }}
+        onBlur={() => window.setTimeout(() => setFocused(false), 100)}
+        onScroll={(event) => {
+          if (!overlayRef.current) return;
+          overlayRef.current.scrollTop = event.currentTarget.scrollTop;
+          overlayRef.current.scrollLeft = event.currentTarget.scrollLeft;
+        }}
+      />
+      {suggestions.length > 0 && (
+        <div className="expression-autocomplete" role="listbox" aria-label={`${ariaLabel} autocomplete`}>
+          {suggestions.map((path) => <button key={path} role="option" aria-selected="false" onMouseDown={(event) => event.preventDefault()} onClick={() => complete(path)}><Braces size={11} />{path}</button>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Inspector({
   node,
   workflow,
@@ -2178,6 +2271,9 @@ function Inspector({
   onLabel,
   onConfig,
   onNotes,
+  onSample,
+  runs,
+  onPinRun,
   onRemove,
   onCollapse,
   onSaveDefault,
@@ -2198,6 +2294,9 @@ function Inspector({
   onLabel: (value: string) => void;
   onConfig: (key: string, value: unknown) => void;
   onNotes: (value: string) => void;
+  onSample: (mode: SampleMode, value: unknown) => void;
+  runs: WorkflowRun[];
+  onPinRun: (run: WorkflowRun, mode: SampleMode) => void;
   onRemove: () => void;
   onCollapse: () => void;
   onSaveDefault: () => void;
@@ -2213,10 +2312,19 @@ function Inspector({
 }) {
   const availableFields = node ? (templateFields[node.data.kind] ?? []) : [];
   const [expressionTarget, setExpressionTarget] = useState("");
+  const [sampleMode, setSampleMode] = useState<SampleMode>("development");
+  const [dataSource, setDataSource] = useState("pinned");
+  const [pathQuery, setPathQuery] = useState("");
+  const [sampleDraft, setSampleDraft] = useState("{}");
+  const [sampleError, setSampleError] = useState("");
   const [shownWebhookToken, setShownWebhookToken] = useState(workflow.webhookToken ?? "");
   useEffect(() => {
     setShownWebhookToken(workflow.webhookToken ?? "");
   }, [workflow.id, workflow.webhookToken]);
+  useEffect(() => {
+    setSampleDraft(JSON.stringify(node?.data.samples?.[sampleMode] ?? {}, null, 2));
+    setSampleError("");
+  }, [node?.id, node?.data.samples, sampleMode]);
   const activeExpressionTarget = availableFields.some(
     (field) => field.key === expressionTarget,
   )
@@ -2250,30 +2358,54 @@ function Inspector({
       queue.push(edge.source);
     }
   }
-  const expressions = [
-    { label: "Input body", value: "{{input.body}}" },
-    ...nodes
-      .filter((item) => upstreamIds.has(item.id))
-      .flatMap((item) => [
-        {
-          label: item.data.label + " output",
-          value: "{{steps." + item.id + "}}",
-        },
-        ...(item.data.kind === "action.http"
-          ? [
-              {
-                label: item.data.label + " body",
-                value: "{{steps." + item.id + ".body}}",
-              },
-            ]
-          : []),
-      ]),
-  ];
+  const defaultInputSample = {
+    body: { message: "Hello from 9n9", status: "ok", items: [{ name: "first", value: 42 }] },
+    files: { document: { name: "example.pdf", mimeType: "application/pdf", size: 1024 } },
+    binary: { attachment: { fileName: "example.bin", mimeType: "application/octet-stream", size: 256 } },
+  };
+  const trigger = nodes.find((item) => item.data.kind.startsWith("trigger."));
+  const selectedRun = runs.find((run) => run.id === dataSource);
+  const pinnedSteps = Object.fromEntries(
+    nodes
+      .filter((item) => upstreamIds.has(item.id) && item.data.samples?.[sampleMode] !== undefined)
+      .map((item) => [item.id, item.data.samples?.[sampleMode]]),
+  );
+  const runSteps = selectedRun
+    ? Object.fromEntries(selectedRun.trace.filter((trace) => trace.output !== undefined).map((trace) => [trace.nodeId, trace.output]))
+    : {};
+  const expressionContext: TemplateContext = selectedRun
+    ? { input: selectedRun.input ?? {}, steps: runSteps }
+    : { input: trigger?.data.samples?.[sampleMode] ?? defaultInputSample, steps: pinnedSteps };
+  const paths = [
+    ...nodes.filter((item) => upstreamIds.has(item.id)).map((item) => ({ path: `steps.${item.id}`, value: expressionContext.steps[item.id] })),
+    ...expressionPaths(expressionContext),
+  ]
+    .filter((entry, index, items) => items.findIndex((candidate) => candidate.path === entry.path) === index)
+    .filter((entry) => !entry.path.startsWith("steps.") || upstreamIds.has(entry.path.split(".")[1]))
+    .filter((entry) => !pathQuery.trim() || entry.path.toLowerCase().includes(pathQuery.trim().toLowerCase()));
+  const preview = activeExpressionTarget
+    ? previewTemplate(text(activeExpressionTarget), expressionContext)
+    : { value: undefined, diagnostics: [], expressions: [] };
   const insertExpression = (expression: string) => {
     if (!activeExpressionTarget) return;
     const current = text(activeExpressionTarget);
     const separator = current && !/\s$/.test(current) ? " " : "";
     onConfig(activeExpressionTarget, current + separator + expression);
+  };
+  const appendExpressionSyntax = (syntax: string) => {
+    if (!activeExpressionTarget) return;
+    const current = text(activeExpressionTarget);
+    const close = current.lastIndexOf("}}");
+    if (close >= 0) onConfig(activeExpressionTarget, current.slice(0, close) + syntax + current.slice(close));
+    else onConfig(activeExpressionTarget, current + `{{input.body${syntax}}}`);
+  };
+  const commitSample = () => {
+    try {
+      onSample(sampleMode, JSON.parse(sampleDraft));
+      setSampleError("");
+    } catch {
+      setSampleError("Sample must be valid JSON");
+    }
   };
 
   return (
@@ -2310,19 +2442,10 @@ function Inspector({
             label="Prompt"
             hint="Runs through your authenticated local Codex container."
           >
-            <textarea
-              rows={10}
-              value={text("prompt")}
-              onChange={textarea("prompt")}
-              onFocus={() => setExpressionTarget("prompt")}
-            />
+            <ExpressionEditor ariaLabel="Prompt" rows={10} value={text("prompt")} paths={paths.map((entry) => entry.path)} onChange={(value) => onConfig("prompt", value)} onFocus={() => setExpressionTarget("prompt")} />
           </Field>
           <Field label="Workspace">
-            <input
-              value={text("cwd") || "/workspace"}
-              onChange={input("cwd")}
-              onFocus={() => setExpressionTarget("cwd")}
-            />
+            <ExpressionEditor ariaLabel="Workspace" rows={2} value={text("cwd") || "/workspace"} paths={paths.map((entry) => entry.path)} onChange={(value) => onConfig("cwd", value)} onFocus={() => setExpressionTarget("cwd")} />
           </Field>
         </>
       )}
@@ -2345,50 +2468,27 @@ function Inspector({
             </select>
           </Field>
           <Field label="URL">
-            <input
-              value={text("url")}
-              onChange={input("url")}
-              onFocus={() => setExpressionTarget("url")}
-            />
+            <ExpressionEditor ariaLabel="URL" rows={2} value={text("url")} paths={paths.map((entry) => entry.path)} onChange={(value) => onConfig("url", value)} onFocus={() => setExpressionTarget("url")} />
           </Field>
           <Field label="Headers" hint="JSON object">
-            <textarea
-              rows={4}
-              value={text("headers")}
-              onChange={textarea("headers")}
-              onFocus={() => setExpressionTarget("headers")}
-            />
+            <ExpressionEditor ariaLabel="Headers" rows={4} value={text("headers")} paths={paths.map((entry) => entry.path)} onChange={(value) => onConfig("headers", value)} onFocus={() => setExpressionTarget("headers")} />
           </Field>
           <Field label="Body">
-            <textarea
-              rows={7}
-              value={text("body")}
-              onChange={textarea("body")}
-              onFocus={() => setExpressionTarget("body")}
-            />
+            <ExpressionEditor ariaLabel="Body" rows={7} value={text("body")} paths={paths.map((entry) => entry.path)} onChange={(value) => onConfig("body", value)} onFocus={() => setExpressionTarget("body")} />
           </Field>
         </>
       )}
 
       {node.data.kind === "data.compose" && (
         <Field label="Value" hint="Plain text or JSON; templates are resolved first.">
-          <textarea
-            rows={12}
-            value={text("value")}
-            onChange={textarea("value")}
-            onFocus={() => setExpressionTarget("value")}
-          />
+          <ExpressionEditor ariaLabel="Value" rows={12} value={text("value")} paths={paths.map((entry) => entry.path)} onChange={(value) => onConfig("value", value)} onFocus={() => setExpressionTarget("value")} />
         </Field>
       )}
 
       {node.data.kind === "logic.condition" && (
         <>
           <Field label="Left value">
-            <input
-              value={text("left")}
-              onChange={input("left")}
-              onFocus={() => setExpressionTarget("left")}
-            />
+            <ExpressionEditor ariaLabel="Left value" rows={2} value={text("left")} paths={paths.map((entry) => entry.path)} onChange={(value) => onConfig("left", value)} onFocus={() => setExpressionTarget("left")} />
           </Field>
           <Field label="Operation">
             <select
@@ -2402,11 +2502,7 @@ function Inspector({
             </select>
           </Field>
           <Field label="Right value">
-            <input
-              value={text("right")}
-              onChange={input("right")}
-              onFocus={() => setExpressionTarget("right")}
-            />
+            <ExpressionEditor ariaLabel="Right value" rows={2} value={text("right")} paths={paths.map((entry) => entry.path)} onChange={(value) => onConfig("right", value)} onFocus={() => setExpressionTarget("right")} />
           </Field>
         </>
       )}
@@ -2445,33 +2541,52 @@ function Inspector({
         <textarea aria-label="Node notes" rows={4} value={node.data.notes ?? ""} onChange={(event) => onNotes(event.target.value)} />
       </Field>
 
+      {!node.data.kind.startsWith("annotation.") && (
+        <section className="sample-data">
+          <header><div><Braces size={14} /><strong>Pinned sample data</strong></div><span>saved with flow</span></header>
+          <div className="sample-mode" role="group" aria-label="Sample environment">
+            <button className={sampleMode === "development" ? "is-active" : ""} onClick={() => setSampleMode("development")}>Development</button>
+            <button className={sampleMode === "production" ? "is-active" : ""} onClick={() => setSampleMode("production")}>Production</button>
+          </div>
+          <label>
+            <span>{node.data.kind.startsWith("trigger.") ? "Workflow input sample" : "Node output sample"}</span>
+            <textarea aria-label={`${sampleMode === "development" ? "Development" : "Production"} sample JSON`} rows={6} value={sampleDraft} onChange={(event) => setSampleDraft(event.target.value)} onBlur={commitSample} />
+          </label>
+          {sampleError && <p className="sample-error">{sampleError}</p>}
+        </section>
+      )}
+
       {availableFields.length > 0 && (
-        <section className="expression-picker">
-          <header>
-            <Braces size={14} />
-            <strong>Insert expression</strong>
-          </header>
-          <select
-            aria-label="Expression target"
-            value={activeExpressionTarget}
-            onChange={(event) => setExpressionTarget(event.target.value)}
-          >
-            {availableFields.map((field) => (
-              <option key={field.key} value={field.key}>
-                {field.label}
-              </option>
-            ))}
+        <section className="expression-picker expression-workbench">
+          <header><Braces size={14} /><strong>Expression workbench</strong></header>
+          <div className="expression-source">
+            <select aria-label="Expression data source" value={dataSource} onChange={(event) => setDataSource(event.target.value)}>
+              <option value="pinned">Pinned {sampleMode} samples</option>
+              {runs.map((run) => <option key={run.id} value={run.id}>Run · {formatTime(run.startedAt)} · {run.status}</option>)}
+            </select>
+            {selectedRun && <button className="button button--quiet" onClick={() => { onPinRun(selectedRun, sampleMode); setDataSource("pinned"); }}>Pin to {sampleMode}</button>}
+          </div>
+          <select aria-label="Expression target" value={activeExpressionTarget} onChange={(event) => setExpressionTarget(event.target.value)}>
+            {availableFields.map((field) => <option key={field.key} value={field.key}>{field.label}</option>)}
           </select>
-          <div>
-            {expressions.map((expression) => (
-              <button
-                key={expression.label + expression.value}
-                onClick={() => insertExpression(expression.value)}
-                title={expression.value}
-              >
-                <Plus size={11} /> {expression.label}
-              </button>
-            ))}
+          <div className="transform-buttons" aria-label="Expression transforms">
+            {["string", "number", "boolean", "date", "json", "array", "object"].map((name) => <button key={name} onClick={() => appendExpressionSyntax(` | ${name}`)}>{name}</button>)}
+            <button onClick={() => appendExpressionSyntax(' ?? "fallback"')}>fallback</button>
+            <button onClick={() => appendExpressionSyntax(' | jsonpath:"$.items[*].name"')}>JSONPath</button>
+          </div>
+          <label className="path-search"><Search size={12} /><input aria-label="Search sample paths" placeholder="Search input, steps, binary, files" value={pathQuery} onChange={(event) => setPathQuery(event.target.value)} /></label>
+          <div className="data-paths">
+            {paths.slice(0, 80).map((entry) => {
+              const upstream = nodes.find((item) => entry.path === `steps.${item.id}`);
+              const label = upstream ? `${upstream.data.label} output` : entry.path;
+              return <button key={entry.path} onClick={() => insertExpression(`{{${entry.path}}}`)} title={`{{${entry.path}}}`}><span><Plus size={11} /> {label}</span><small>{entry.value === undefined ? "missing" : typeof entry.value === "string" ? entry.value : JSON.stringify(entry.value)}</small></button>;
+            })}
+            {!paths.length && <p>No matching sample paths.</p>}
+          </div>
+          <div className={`expression-preview${preview.diagnostics.some((item) => item.severity === "error") ? " has-error" : ""}`}>
+            <header><strong>Preview</strong><span>{preview.expressions.length} expression{preview.expressions.length === 1 ? "" : "s"}</span></header>
+            <pre>{JSON.stringify(preview.value, null, 2) ?? "undefined"}</pre>
+            {preview.diagnostics.map((diagnostic, index) => <p key={`${diagnostic.code}-${index}`} className={`is-${diagnostic.severity}`}>{diagnostic.message}</p>)}
           </div>
         </section>
       )}

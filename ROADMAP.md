@@ -49,7 +49,7 @@ cloud-account requirement, or telemetry. This file is the durable product plan.
 - Node defaults, notes, canvas groups, and sticky notes.
 - Keyboard-only accessibility and smaller-screen fallback.
 
-## v0.6 — Expressions and data mapping
+## v0.6 — Expressions and data mapping (complete)
 
 - Syntax-highlighted expression editor with autocomplete.
 - Browse previous-node output and insert fields by clicking.

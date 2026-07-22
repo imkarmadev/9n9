@@ -1,4 +1,5 @@
 import type { WorkflowEdge, WorkflowNode } from "./types";
+import { validateTemplateSyntax } from "./template";
 
 export type ValidationIssue = {
   id: string;
@@ -81,6 +82,14 @@ export function validateWorkflowGraph(
     }
 
     const config = node.data.config;
+    const expressionErrors = validateTemplateSyntax(config);
+    for (const [index, diagnostic] of expressionErrors.entries()) {
+      issues.push({
+        id: `expression-${node.id}-${index}`,
+        nodeId: node.id,
+        message: `${node.data.label}: ${diagnostic.message}`,
+      });
+    }
     if (node.data.kind === "action.http" && !configured(config.url)) {
       issues.push({
         id: "http-url-" + node.id,

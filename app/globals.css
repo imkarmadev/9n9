@@ -1824,6 +1824,235 @@ pre {
   color: var(--text);
 }
 
+.expression-editor {
+  position: relative;
+  width: 100%;
+  overflow: visible;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #121317;
+}
+
+.expression-editor.is-focused {
+  border-color: color-mix(in srgb, var(--purple) 70%, var(--line));
+  box-shadow: 0 0 0 2px rgba(165, 137, 255, 0.08);
+}
+
+.field .expression-editor textarea,
+.expression-editor pre {
+  width: 100%;
+  margin: 0;
+  padding: 9px;
+  border: 0;
+  background: transparent;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.expression-editor pre {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: #c5cad3;
+  pointer-events: none;
+}
+
+.expression-editor pre mark {
+  border-radius: 3px;
+  background: rgba(165, 137, 255, 0.13);
+  color: #c6b8ff;
+}
+
+.field .expression-editor textarea {
+  position: relative;
+  z-index: 1;
+  min-height: 0;
+  outline: 0;
+  color: transparent;
+  caret-color: var(--lime);
+  resize: vertical;
+}
+
+.field .expression-editor textarea::selection {
+  background: rgba(181, 244, 69, 0.28);
+  color: transparent;
+}
+
+.expression-autocomplete {
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  display: grid;
+  max-height: 210px;
+  padding: 5px;
+  overflow: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #202228;
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.45);
+}
+
+.expression-autocomplete button {
+  display: flex;
+  min-height: 29px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  text-align: left;
+}
+
+.expression-autocomplete button:hover {
+  background: var(--panel-3);
+  color: var(--lime);
+}
+
+.sample-data {
+  margin-top: 18px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #131419;
+}
+
+.sample-data > header,
+.sample-data > header > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.sample-data > header {
+  justify-content: space-between;
+  margin-bottom: 9px;
+  color: var(--blue);
+}
+
+.sample-data header strong { color: var(--text); font-size: 10px; }
+.sample-data header > span { color: var(--muted-2); font-size: 8px; text-transform: uppercase; }
+
+.sample-mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin-bottom: 9px;
+  padding: 3px;
+  border-radius: 7px;
+  background: #0f1013;
+}
+
+.sample-mode button {
+  height: 27px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-2);
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.sample-mode button.is-active { background: var(--panel-3); color: var(--blue); }
+.sample-data > label { display: grid; gap: 5px; }
+.sample-data > label > span { color: var(--muted-2); font-size: 9px; }
+.sample-data textarea { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #101115; color: #c5cad3; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 9px; line-height: 1.45; resize: vertical; }
+.sample-error { margin: 6px 0 0; color: var(--red); font-size: 9px; }
+
+.expression-workbench > .expression-source {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.expression-workbench > .expression-source select,
+.expression-workbench > select {
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #101115;
+  color: var(--text);
+  font-size: 9px;
+}
+
+.expression-workbench > .expression-source .button { height: 29px; justify-content: center; }
+
+.expression-workbench > .transform-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.expression-workbench > .transform-buttons button {
+  min-height: 24px;
+  padding: 3px 6px;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+.path-search {
+  display: flex;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted-2);
+}
+
+.path-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 9px; }
+
+.expression-workbench > .data-paths {
+  display: grid;
+  max-height: 220px;
+  gap: 3px;
+  overflow: auto;
+}
+
+.expression-workbench > .data-paths button {
+  display: grid;
+  min-height: 36px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  padding: 5px 7px;
+  text-align: left;
+}
+
+.data-paths button span { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.data-paths button small { overflow: hidden; color: var(--muted-2); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.data-paths > p { color: var(--muted-2); font-size: 9px; }
+
+.expression-workbench > .expression-preview {
+  display: block;
+  margin-top: 9px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.expression-preview > header { display: flex; align-items: center; justify-content: space-between; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+.expression-preview header strong { font-size: 9px; }
+.expression-preview header span { color: var(--muted-2); font-size: 8px; }
+.expression-preview pre { max-height: 170px; margin: 0; padding: 8px; overflow: auto; color: #c5cad3; font-size: 9px; line-height: 1.45; white-space: pre-wrap; }
+.expression-preview > p { margin: 0; padding: 6px 8px; border-top: 1px solid var(--line); font-size: 8px; line-height: 1.4; }
+.expression-preview > p.is-warning { color: var(--orange); }
+.expression-preview > p.is-error { color: var(--red); }
+.expression-preview.has-error { border-color: rgba(230, 90, 101, 0.45); }
+
 .node-test > header .button {
   height: 29px;
   padding: 0 8px;

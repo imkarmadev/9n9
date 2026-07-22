@@ -32,6 +32,9 @@ for Codex: 9n9 calls the private, already-authenticated `codex-agent` bridge.
 - Automatic layout, snap-to-grid, minimap, zoom-to-selected, and collapsible panels
 - Searchable palette with recent nodes, reusable node defaults, notes, groups, and sticky notes
 - Keyboard-accessible editing and a compact-screen palette/inspector fallback
+- Highlighted expression fields with path autocomplete and clickable data browsing
+- Typed expression previews, validation diagnostics, fallbacks, and transform pipelines
+- JSONPath, binary/file references, pinned samples, previous-run data, and separate development/production samples
 - Docker image for arm64 and amd64
 - Template values such as `{{input.body}}` and `{{steps.nodeId.body}}`
 
@@ -75,6 +78,9 @@ protection, import/export, templates, versions, activation confirmation,
 multi-selection, clipboard operations, group movement, edge editing and
 reconnection, layout/grid/minimap tools, node defaults and notes, canvas
 annotations, compact-screen behavior, editing, execution, and run history.
+Expression coverage includes typed transforms, fallbacks, JSONPath wildcards,
+file/binary references, diagnostics, autocomplete, pinned environments, and
+previous-run data.
 Failure screenshots, traces, and videos are written to `test-results/`.
 
 ## Workflow management
@@ -104,6 +110,31 @@ Failure screenshots, traces, and videos are written to `test-results/`.
 - Search the palette, reuse recent nodes, or save a configured node as the
   default for that node type. Groups, sticky notes, and node notes document a
   workflow without participating in validation or execution.
+
+## Expressions and samples
+
+Expressions work in templatable node fields and preserve native types when the
+entire field is one expression:
+
+```text
+{{input.body.customer.name}}
+{{input.body.amount ?? "0" | number}}
+{{steps.http.body.items | jsonpath:"$[*].name"}}
+{{files.invoice.name}}
+{{binary.photo.mimeType}}
+```
+
+Available pipeline transforms are `string`, `number`, `boolean`, `date`,
+`json`, `array`, `object`, `fallback`, and `jsonpath`. Use `??` for concise
+fallback values. JSONPath supports property access, array indexes, quoted keys,
+and `*` wildcards.
+
+The inspector’s Expression workbench shows a typed preview and missing-path or
+syntax diagnostics. Browse sample values and click any path to insert it. Each
+node can store separate development and production JSON samples. A previous run
+can be selected for preview and pinned into either environment. Samples are
+saved in workflow JSON, so do not place secrets in them; use Credentials for
+secret values.
 
 For faster browser-test iteration:
 
